@@ -1,0 +1,1917 @@
+---
+title: "Relationship between dopamine D2 receptor availability and cognitive performance"
+author: "Maria Lee"
+date: "1/31/2020"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+#Change to actual location 
+knitr::opts_knit$set(root.dir = "~/ownCloud/FLB457_psychosis/DerivedData/Cognition")
+
+library(dplyr) #For data wrangling
+library(readxl) 
+library(ppcor) #For partial correlation
+library(ggplot2) #To make plots
+library(cowplot) #To arrange several ggplots next to one another
+library(gridGraphics) #To arrange several ggplots next to one another
+
+#Load BPND files
+load("/Users/marialee/ownCloud/FLB457_psychosis/DerivedData/BPND/BPND_values_FreeSurfer.Rdata")
+bpnd <- TidyAll_FreeSurfer
+#View(bpnd) #To look at the data.frame and available variables. 
+bpnd <- dplyr::select(bpnd, subject, Region, bp.logan.cer) #Keep only BPND values using logan with cerebellum as reference region
+bpnd <- tidyr::spread(bpnd, Region, bp.logan.cer) #Convert table to tidy format
+bpnd <- dplyr::select(bpnd, subject, LFC, THA, ACC, HIP, TC) #Keep only regions of interest
+bpnd <- dplyr::rename(bpnd, DLPFC = LFC) #Change column name LFC to DLPFC for clarity
+
+#Load Cognition file
+cognition <- read_excel("/Users/marialee/ownCloud/FLB457_psychosis/DerivedData/Cognition/tidy_cognition.xlsx")
+
+#Load Executive function file
+wcst <- read_excel("/Users/marialee/ownCloud/FLB457_psychosis/DerivedData/Cognition/wcst_tidy.xlsx")
+#Code Patient variable as 0 = HC and 1 = Patient
+wcst$Patient <- recode(wcst$Patient, Patient = "1", HC = "0")
+wcst$Patient <- as.numeric(wcst$Patient)
+#Make WCST file for follow-up, for exploratory analyses
+wcst_fu <- dplyr::filter(wcst, Baseline_FU == "FU")
+#Filter out only Baseline cases for main analyses
+wcst <- dplyr::filter(wcst, Baseline_FU == "Base")
+
+#Convert non-numeric columns to numeric
+cognition$Fluency <- as.numeric(cognition$Fluency, na.rm = TRUE) 
+cognition$WMS_III <- as.numeric(cognition$WMS_III, na.rm = TRUE)
+cognition$LNS <- as.numeric(cognition$LNS, na.rm = TRUE)
+cognition$Mazes <- as.numeric(cognition$Mazes, na.rm = TRUE)
+cognition$BVMT_R <- as.numeric(cognition$BVMT_R, na.rm = TRUE)
+cognition$CPT <- as.numeric(cognition$CPT, na.rm = TRUE)
+
+#Flip TMT test scores so that higher values are better
+cognition$TMT_f <- ((max(cognition$TMT) - cognition$TMT) + min(cognition$TMT))
+
+#Make domain score Speed of Processing from TMT, BACS and Fluency, using raw scores
+cognition <- cognition %>% mutate(SOP = (TMT_f + BACS + Fluency)/3)
+#Make domain score Working Memory from WMS_III and LNS, using raw scores
+cognition <- cognition %>% mutate(WM = (WMS_III + LNS)/2)
+#Make neurocognitive domain score using SOP, WM, HVLT-R, Mazes, BVMT-R, CPT, using raw scores
+cognition <- cognition %>% mutate(Neurocog = (SOP + WM + HVLT_R + Mazes + BVMT_R + CPT/6))
+
+```
+
+
+#Aim
+Aim of the study... 
+
+#Preparation
+Association between age and performance on cognitive tests is well-docmented, hence the need for age-corrected cognitive test scores. The norms of the MCCB were derived from an American norming sample, which might not be applicable to Swedish conditions. As no Swedish norming of the MCCB exists, we will age-correct our cognitive data and use the residuals from those regressions models. 
+
+```{r, echo=FALSE}
+#Wrangling data to be able to handle NA:s when I add age-corrected residuals; the Vincent approach (row names)
+cognition <- as.data.frame(cognition) #Making it a data.frame because it doesn't work with tibble
+new_name <- cognition$KASP_id
+cognition <- data.frame(cognition, row.names = new_name)
+
+wcst <- as.data.frame(wcst)
+new_name_wcst <- wcst$ClientID
+wcst <- data.frame(wcst, row.names = new_name_wcst)
+
+#Make a regression model and extract the residuals, using the whole client sample for better correction
+#Verbal Learning
+model_verblearn <- lm(formula = HVLT_R ~ Age, cognition) #Regression model
+agecorr_verblearn_residuals <- model_verblearn$residuals #Extracting residuals
+agecorr_verblearn_residuals <- data.frame(names(agecorr_verblearn_residuals), agecorr_verblearn_residuals)
+#Making residuals into data.frame to be able to join together with cognition data.frame in next step
+#Working Memory
+model_wm <- lm(formula = WM ~ Age, cognition) 
+agecorr_wm_residuals <- model_wm$residuals
+agecorr_wm_residuals <- data.frame(names(agecorr_wm_residuals), agecorr_wm_residuals)
+#Speed of Processing
+model_sop <- lm(formula = SOP ~ Age, cognition) 
+agecorr_sop_residuals <- model_sop$residuals
+agecorr_sop_residuals <- data.frame(names(agecorr_sop_residuals), agecorr_sop_residuals)
+#Visual Learning
+model_vis_learn <- lm(formula = BVMT_R ~ Age, cognition) 
+agecorr_vis_learn_residuals <- model_vis_learn$residuals
+agecorr_vis_learn_residuals <- data.frame(names(agecorr_vis_learn_residuals), agecorr_vis_learn_residuals)
+#Attention
+model_cpt <- lm(formula = CPT ~ Age, cognition) 
+agecorr_cpt_residuals <- model_cpt$residuals
+agecorr_cpt_residuals <- data.frame(names(agecorr_cpt_residuals), agecorr_cpt_residuals)
+#General Cognitive Ability
+model_neuro_cog <- lm(formula = Neurocog ~ Age, cognition) 
+agecorr_neuro_cog_residuals <- model_neuro_cog$residuals
+agecorr_neuro_cog_residuals <- data.frame(names(agecorr_neuro_cog_residuals), agecorr_neuro_cog_residuals)
+#Executive Function
+model_wcst <- lm(formula = PctErrors ~ AgeYr, wcst)
+agecorr_wcst_residuals <- model_wcst$residuals
+agecorr_wcst_residuals <- data.frame(names(agecorr_wcst_residuals), agecorr_wcst_residuals)
+
+#Add residuals to cognition data.frame, using full_join
+cognition <- full_join(cognition, agecorr_verblearn_residuals, by = c("KASP_id" = "names.agecorr_verblearn_residuals."))
+cognition <- full_join(cognition, agecorr_wm_residuals, by = c("KASP_id" = "names.agecorr_wm_residuals."))
+cognition <- full_join(cognition, agecorr_sop_residuals, by = c("KASP_id" = "names.agecorr_sop_residuals."))
+cognition <- full_join(cognition, agecorr_vis_learn_residuals, by = c("KASP_id" = "names.agecorr_vis_learn_residuals."))
+cognition <- full_join(cognition, agecorr_cpt_residuals, by = c("KASP_id" = "names.agecorr_cpt_residuals."))
+cognition <- full_join(cognition, agecorr_neuro_cog_residuals, by = c("KASP_id" = "names.agecorr_neuro_cog_residuals."))
+
+#Executive Function 
+wcst <- full_join(wcst, agecorr_wcst_residuals, by = c("ClientID" = "names.agecorr_wcst_residuals."))
+
+```
+
+
+
+```{r, echo=FALSE}
+
+#Check match between residuals and cognition by plotting them against one another 
+
+plot(cognition$agecorr_verblearn_residuals, cognition$HVLT_R, main = "Verbal Learning", ylab = "Raw scores verbal learning", xlab = "Age corrected residuals for verbal learning")
+
+plot(cognition$agecorr_wm_residuals, cognition$WM, main = "Working Memory", ylab = "Raw scores working memory composite", xlab = "Age corrected residuals for working memory composite")
+
+plot(cognition$agecorr_sop_residuals, cognition$SOP, main = "Speed of Processing", ylab = "Raw scores speed of processing composite", xlab = "Age corrected residuals for speed of processing composite")
+
+#Check match between residuals and cognition by plotting them against one another 
+
+plot(cognition$agecorr_vis_learn_residuals, cognition$BVMT_R, main = "Visual Learning", ylab = "Raw scores BVMT-R", xlab = "Age corrected residuals for visual learning")
+
+plot(cognition$agecorr_cpt_residuals, cognition$CPT, main = "Attention", ylab = "Raw scores CPT", xlab = "Age corrected residuals for attention")
+
+plot(cognition$agecorr_neuro_cog_residuals, cognition$Neurocog, main = "General Cognitive Ability", ylab = "Raw scores neurocognitive composite", xlab = "Age corrected residuals for general cognitive ability")
+
+plot(wcst$agecorr_wcst_residuals, wcst$PctErrors, main = "Executive Function", ylab = "Raw scores Percentage Errors WCST", xlab = "Age corrected residuals for executive function")
+
+
+```
+
+
+
+
+```{r, echo=FALSE, include=FALSE}
+
+#Standardizing the age-corrected residuals for more interpretable beta-estimates
+cognition <- cognition %>% 
+                  mutate_at(.vars = vars("agecorr_verblearn_residuals", "agecorr_wm_residuals", 
+                                        "agecorr_sop_residuals", "agecorr_vis_learn_residuals", 
+                                        "agecorr_cpt_residuals", "agecorr_neuro_cog_residuals"),
+                            .funs = list(~scale(.) %>% as.vector))
+wcst <- wcst %>% mutate_at(.vars = vars("agecorr_wcst_residuals"),
+                           .funs = list(~scale(.)%>% as.vector))
+
+#Merge PET dataset with Cognition dataset, for the PET subjects only
+d2_cognition <- dplyr::inner_join(bpnd, cognition) #Cognition (MCCB) and PET subjects
+d2_wcst <- dplyr::inner_join(bpnd, wcst) #Cognition (WCST) and PET subjects
+
+#Make regression models and extract age-corrected BPND residuals to use in plots for more accurate depiction of linear models
+#DLPFC
+model_bp_dlpfc <- lm(formula = DLPFC ~ Age, d2_cognition)
+agecorr_bpnd_dlpfc <- model_bp_dlpfc$residuals
+#Hippocampus
+model_bp_hip <- lm(formula = HIP ~ Age, d2_cognition) #BPND HIP
+agecorr_bpnd_hip <- model_bp_hip$residuals
+#Thalamus - add if needed
+model_bp_tha <- lm(formula = THA ~ Age, d2_cognition)
+agecorr_bpnd_tha <- model_bp_tha$residuals
+#ACC - add if needed
+model_bp_acc <- lm(formula = ACC ~ Age, d2_cognition)
+agecorr_bpnd_acc <- model_bp_acc$residuals
+#Temporal cortex - add if needed
+model_bp_tc <- lm(formula = TC ~ Age, d2_cognition)
+agecorr_bpnd_tc <- model_bp_tc$residuals
+
+#Add to D2Cognition data.frame
+d2_cognition$agecorr_bpnd_dlpfc <- agecorr_bpnd_dlpfc
+d2_cognition$agecorr_bpnd_hip <- agecorr_bpnd_hip
+d2_cognition$agecorr_bpnd_tha <- agecorr_bpnd_tha
+d2_cognition$agecorr_bpnd_acc <- agecorr_bpnd_acc
+d2_cognition$agecorr_bpnd_tc <- agecorr_bpnd_tc
+
+#The above was not done for BPND values in the WCST data frame, as none of those exploratory analyses showed any promising trends worth plotting
+
+#For regression models with interaction effect we want to center the values of our variables, except for the dummy variable HC_pat. 
+#Center age and BPND values for interaction plots, then add to D2Cognition data.frame
+
+#Center age variable for cognition data.frame
+d2_cognition$Age_c <- scale(d2_cognition$Age, center = T, scale = F)
+#Center BPND variables, for use in interaction analyses, cognition data.frame
+d2_cognition$DLPFC_c <- scale(d2_cognition$DLPFC, center = T, scale = F)
+d2_cognition$HIP_c <- scale(d2_cognition$HIP, center = T, scale = F)
+d2_cognition$THA_c <- scale(d2_cognition$THA, center = T, scale = F)
+d2_cognition$ACC_c <- scale(d2_cognition$ACC, center = T, scale = F)
+d2_cognition$TC_c <- scale(d2_cognition$TC, center = T, scale = F)
+
+#Center age variable for wcst data.frame
+d2_wcst$AgeYr_c <- scale(d2_wcst$AgeYr, center = T, scale = F)
+#Center BPND variables, for use in interaction analyses, wcst data.frame 
+d2_wcst$DLPFC_c <- scale(d2_wcst$DLPFC, center = T, scale = F)
+d2_wcst$HIP_c <- scale(d2_wcst$HIP, center = T, scale = F)
+d2_wcst$THA_c <- scale(d2_wcst$THA, center = T, scale = F)
+d2_wcst$ACC_c <- scale(d2_wcst$ACC, center = T, scale = F)
+d2_wcst$TC_c <- scale(d2_wcst$TC, center = T, scale = F)
+
+```
+
+
+
+##  Confirmatory analysis part 1 - regression without interaction effect
+
+```{r, echo=FALSE}
+
+#Calculate the actual regression
+#CONFIRMATORY ANALYSIS 1 - VERBAL LEARNING AND D2R IN DLPFC
+model_vl_dlpfc <- lm(formula = DLPFC ~ agecorr_verblearn_residuals + Age + Patient, data = d2_cognition)
+summary(model_vl_dlpfc)
+round(confint(model_vl_dlpfc), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cognition$DLPFC,d2_cognition$agecorr_verblearn_residuals, d2_cognition[,c("Age","Patient")])
+
+#CONFIRMATORY ANALYSIS 2 - VERBAL LEARNING AND D2R IN HIPPOCAMPUS
+model_vl_hip <- lm(formula = HIP ~ agecorr_verblearn_residuals + Age + Patient, data = d2_cognition)
+summary(model_vl_hip)
+round(confint(model_vl_hip), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cognition$HIP,d2_cognition$agecorr_verblearn_residuals, d2_cognition[,c("Age","Patient")])
+
+#CONFIRMATORY ANALYSIS 3 - WORKING MEMORY AND D2R IN DLPFC
+model_wm_dlpfc <- lm(formula = DLPFC ~ agecorr_wm_residuals + Age + Patient, data = d2_cognition)
+summary(model_wm_dlpfc)
+round(confint(model_wm_dlpfc), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cognition$DLPFC,d2_cognition$agecorr_wm_residuals, d2_cognition[,c("Age","Patient")])
+
+#CONFIRMATORY ANALYSIS 4 - SPEED OF PROCESSING AND D2R IN DLPFC
+model_sop_dlpfc <- lm(formula = DLPFC ~ agecorr_sop_residuals + Age + Patient, data = d2_cognition)
+summary(model_sop_dlpfc)
+round(confint(model_sop_dlpfc), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cognition$DLPFC,d2_cognition$agecorr_sop_residuals, d2_cognition[,c("Age","Patient")])
+
+```
+
+###  Correcting for multiple comparison
+
+```{r}
+#Checking inter-correlation between cognitive tests in confirmatory analyses, as well as between ROIs in these analyses
+cor(d2_cognition$agecorr_verblearn_residuals, d2_cognition$agecorr_sop_residuals) #0.4580175, Verbal learning and Speed of Processing
+cor(d2_cognition$agecorr_verblearn_residuals, d2_cognition$agecorr_wm_residuals) #0.2651436 Verbal learning and Working Memory
+cor(d2_cognition$agecorr_sop_residuals, d2_cognition$agecorr_wm_residuals) #0.4965122 Speed of Processing and Working Memory
+
+cor(d2_cognition$DLPFC, d2_cognition$HIP) #0.3544352, DLPFC and Hippocampus
+
+#Computing the number of effective tests among all dependent variables in confirmatory analyses section, mEff, as described in Derringer, 2018, using the meff-function. 
+
+#Downloading meff function
+source('https://osf.io/ws6xc/download')
+#Set alpha level
+alpha <- 0.05
+meff_bpnd <- meff(d2_cognition[, c("DLPFC", "HIP")])
+#Calculating new p-value for hypothesis testing section. 
+p_value <- alpha/meff_bpnd
+p_value
+
+```
+
+
+Based on the Meff calculation the new p-value for the confirmatory analyses will be set to 0.027.
+
+
+```{r}
+
+#Plot the regression model and a single regression line
+#First, make duplicate plot of first one to be able to extract legend from
+conf_plot0 <- ggplot(d2_cognition, aes(x = agecorr_verblearn_residuals, y = agecorr_bpnd_dlpfc)) +
+  geom_point(aes(colour = factor(Patient), shape = factor(Patient))) +
+  geom_smooth(method = "lm", se = TRUE, size = 0.5, color = "black") +
+  scale_color_manual(name="", 
+                     labels = c("HC", 
+                                "FEP"),
+                     values = c("0"="blue", 
+                                "1"="red")) +
+  scale_shape_manual(name="",
+                     labels = c("HC",
+                                "FEP"),
+                                values = c(1, 17)) + 
+  labs(x = "Verbal Learning", y = "DLPFC") +
+  theme_minimal_grid() +
+  panel_border()
+
+#CONFIRMATORY ANALYSIS 1 - VERBAL LEARNING AND D2R IN DLPFC
+conf_plot1 <- ggplot(d2_cognition, aes(x = agecorr_verblearn_residuals, y = agecorr_bpnd_dlpfc)) +
+  geom_point(aes(colour = factor(Patient), shape = factor(Patient))) +
+  geom_smooth(method = "lm", se = TRUE, size = 0.5, color = "black") +
+  scale_color_manual(name="", 
+                     labels = c("HC", 
+                                "FEP"),
+                     values = c("0"="blue", 
+                                "1"="red")) +
+  scale_shape_manual(values = c(1, 17)) + 
+  ylim(-0.7, 0.7) +
+  xlim(-1.6, 1.8) +
+  theme_minimal_grid() +
+  theme(legend.position="None") +
+  labs(x = "Verbal Learning", y = "DLPFC") +
+  panel_border()
+
+#CONFIRMATORY ANALYSIS 2 - VERBAL LEARNING AND D2R IN HIPPOCAMPUS
+conf_plot2 <- ggplot(d2_cognition, aes(x = agecorr_verblearn_residuals, y = agecorr_bpnd_hip)) +
+  geom_point(aes(colour = factor(Patient), shape = factor(Patient))) +
+  geom_smooth(method = "lm", se = TRUE, size = 0.5, color = "black") +
+  scale_color_manual(name="", 
+                     labels = c("Healthy control", 
+                                "Patient"),
+                     values = c("0"="blue", 
+                                "1"="red")) +
+  scale_shape_manual(values = c(1, 17)) + 
+  ylim(-0.7, 0.7) +
+  xlim(-1.6, 1.8) +
+  theme_minimal_grid() +
+  theme(legend.position="None") +
+  labs(x = "Verbal Learning", y = "Hippocampus") +
+  panel_border()
+
+#CONFIRMATORY ANALYSIS 3 - WORKING MEMORY AND D2R IN DLPFC
+conf_plot3 <- ggplot(d2_cognition, aes(x = agecorr_wm_residuals, y = agecorr_bpnd_dlpfc)) +
+  geom_point(aes(colour = factor(Patient), shape = factor(Patient), fill = factor(Patient))) +
+  geom_smooth(method = "lm", se = TRUE, size = 0.5, color = "black") +
+  scale_color_manual(name="", 
+                     labels = c("Healthy control", 
+                                "Patient"),
+                     values = c("0"="blue", 
+                                "1"="red")) +
+  scale_shape_manual(values = c(1, 17)) + 
+  ylim(-0.7, 0.7) +
+  xlim(-1.6, 1.8) +
+  theme_minimal_grid() +
+  theme(legend.position="None") +
+  labs(x = "Working memory", y = "DLPFC") +
+  panel_border()
+
+#CONFIRMATORY ANALYSIS 4 - SPEED OF PROCESSING AND D2R IN DLPFC
+conf_plot4 <- ggplot(d2_cognition, aes(x = agecorr_sop_residuals, y = agecorr_bpnd_dlpfc)) +
+  geom_point(aes(colour = factor(Patient), shape = factor(Patient))) +
+  geom_smooth(method = "lm", se = TRUE, size = 0.5, color = "black") +
+  scale_color_manual(name="", 
+                     labels = c("Healthy control", 
+                                "Patient"),
+                     values = c("0"="blue", 
+                                "1"="red")) +
+  scale_shape_manual(values = c(1, 17)) + 
+  ylim(-0.7, 0.7) +
+  xlim(-1.6, 1.8) +
+  theme_minimal_grid() +
+  theme(legend.position="None") +
+  labs(x = "Speed of processing", y = "DLPFC") +
+  panel_border()
+  
+
+plot_cube <- plot_grid(conf_plot1, conf_plot2, conf_plot3, conf_plot4, labels = c('a', 'b', 'c', 'd'))
+
+#Adding patient/healthy control legend by extracting the legend from first plot
+legend <- get_legend(
+  conf_plot0 + 
+    guides(color = guide_legend(nrow = 1, label = TRUE)) +
+    theme(legend.position = "bottom", legend.justification = "center"))
+
+#Adding a title
+#title <- ggdraw() +
+ # draw_label(
+   # "Confirmatory analyses of D2-R levels and cognition",
+  #  fontface = 'bold',
+  #  x = 0,
+  #  hjust = 0
+  #) +
+  #theme(
+  #  # add margin on the left of the drawing canvas,
+  #  # so title is aligned with left edge of first plot
+   # plot.margin = margin(0, 0, 0, 7)
+  #)
+
+#Put title, legend and plot together and plot
+plot_grid(
+  plot_cube, legend,
+  ncol = 1,
+  # rel_heights values control vertical title margins
+  rel_heights = c(1, 0.2)
+)
+
+```
+
+### Checking model assumptions
+1) Verbal learning in the DLPFC
+2) Verbal learning in the hippocampus
+3) Working memory in the DLPFC
+4) Speed of proccessing in the DLPFC
+
+
+```{r}
+#Verbal learning DLPFC
+plot_vl_dlpfc <- plot(model_vl_dlpfc$fitted.values, model_vl_dlpfc$residuals)
+par(mfrow = c(2,2))
+plot(model_vl_dlpfc)
+
+#Verbal learning hippocampus
+plot_vl_hip <- plot(model_vl_hip$fitted.values, model_vl_hip$residuals)
+par(mfrow = c(2,2))
+plot(model_vl_hip)
+
+#Working memory DLPFC
+plot_wm_dlpfc <- plot(model_wm_dlpfc$fitted.values, model_wm_dlpfc$residuals)
+par(mfrow = c(2,2))
+plot(model_wm_dlpfc)
+
+#Speed of processing DLPFC
+plot_sop_dlpfc <- plot(model_sop_dlpfc$fitted.values, model_sop_dlpfc$residuals)
+par(mfrow = c(2,2))
+plot(model_sop_dlpfc)
+
+```
+
+
+
+
+
+##  Confirmatory analysis part 2 - with interaction effect for patients/healthy controls
+
+```{r, echo=FALSE, include=TRUE}
+
+#Calculate the regression model with interaction effect
+
+#CONFIRMATORY ANALYSIS 1 - VERBAL LEARNING AND D2R IN DLPFC
+model_vl_dlpfc2_c <- lm(formula = DLPFC_c ~ agecorr_verblearn_residuals*Patient + Age_c, data = d2_cognition)
+summary(model_vl_dlpfc2_c)
+round(confint(model_vl_dlpfc2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+d2_cognition_p <- dplyr::filter(d2_cognition, Patient == 1)
+d2_cognition_h <- dplyr::filter(d2_cognition, Patient == 0)
+pcor.test(d2_cognition_p$DLPFC,d2_cognition_p$agecorr_verblearn_residuals, d2_cognition_p[,c("Age")])
+pcor.test(d2_cognition_h$DLPFC,d2_cognition_h$agecorr_verblearn_residuals, d2_cognition_h[,c("Age")])
+
+#CONFIRMATORY ANALYSIS 2 - VERBAL LEARNING AND D2R IN HIPPOCAMPUS
+model_vl_hip2_c <- lm(formula = HIP_c ~ agecorr_verblearn_residuals*Patient + Age_c, data = d2_cognition)
+summary(model_vl_hip2_c)
+round(confint(model_vl_hip2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_cognition_p$HIP,d2_cognition_p$agecorr_verblearn_residuals, d2_cognition_p[,c("Age")])
+pcor.test(d2_cognition_h$HIP,d2_cognition_h$agecorr_verblearn_residuals, d2_cognition_h[,c("Age")])
+
+#CONFIRMATORY ANALYSIS 3 - WORKING MEMORY AND D2R IN DLPFC
+model_wm_dlpfc2_c <- lm(formula = DLPFC_c ~ agecorr_wm_residuals*Patient + Age_c, data = d2_cognition)
+summary(model_wm_dlpfc2_c)
+round(confint(model_wm_dlpfc2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_cognition_p$DLPFC,d2_cognition_p$agecorr_wm_residuals, d2_cognition_p[,c("Age")])
+pcor.test(d2_cognition_h$DLPFC,d2_cognition_h$agecorr_wm_residuals, d2_cognition_h[,c("Age")])
+
+#CONFIRMATORY ANALYSIS 4 - SPEED OF PROCESSING AND D2R IN DLPFC
+model_sop_dlpfc2_c <- lm(formula = DLPFC_c ~ agecorr_sop_residuals*Patient + Age_c, data = d2_cognition)
+summary(model_sop_dlpfc2_c)
+round(confint(model_sop_dlpfc2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_cognition_p$DLPFC,d2_cognition_p$agecorr_sop_residuals, d2_cognition_p[,c("Age")])
+pcor.test(d2_cognition_h$DLPFC,d2_cognition_h$agecorr_sop_residuals, d2_cognition_h[,c("Age")])
+
+```
+
+
+
+```{r}
+
+#Plot the regression model and the regression lines for the two groups 
+
+#First, make duplicate plot of first one to be able to extract legend from
+conf_plot5 <- ggplot(d2_cognition, aes(x = agecorr_verblearn_residuals, y = agecorr_bpnd_dlpfc)) +
+  geom_point(aes(colour = factor(Patient))) +
+  geom_smooth(method = "lm", se = TRUE, size = 0.5, aes(group = Patient, color = factor(Patient))) +
+  scale_color_manual(name="", 
+                     labels = c("Healthy control", 
+                                "Patient"),
+                     values = c("0"="blue", 
+                                "1"="red")) +
+  labs(x = "Verbal Learning", y = "DLPFC")
+
+#CONFIRMATORY ANALYSIS 1 - VERBAL LEARNING AND D2R IN DLPFC
+conf_plot6 <- ggplot(d2_cognition, aes(x = agecorr_verblearn_residuals, y = agecorr_bpnd_dlpfc)) +
+  geom_point(aes(colour = factor(Patient))) +
+  geom_smooth(method = "lm", se = TRUE, size = 0.5, aes(group = Patient, color = factor(Patient))) +
+  scale_color_manual(name="", 
+                     labels = c("Healthy control", 
+                                "Patient"),
+                     values = c("0"="blue", 
+                                "1"="red")) +
+  theme(legend.position="None") +
+  labs(x = "Verbal Learning", y = "DLPFC")
+
+#CONFIRMATORY ANALYSIS 2 - VERBAL LEARNING AND D2R IN HIPPOCAMPUS
+conf_plot7 <- ggplot(d2_cognition, aes(x = agecorr_verblearn_residuals, y = agecorr_bpnd_hip)) +
+  geom_point(aes(colour = factor(Patient))) +
+  geom_smooth(method = "lm", se = TRUE, size = 0.5, aes(group = Patient, color = factor(Patient))) +
+  scale_color_manual(name="", 
+                     labels = c("Healthy control", 
+                                "Patient"),
+                     values = c("0"="blue", 
+                                "1"="red")) +
+  theme(legend.position="None") +
+  labs(x = "Verbal Learning", y = "Hippocampus")
+
+#CONFIRMATORY ANALYSIS 3 - WORKING MEMORY AND D2R IN DLPFC
+conf_plot8 <- ggplot(d2_cognition, aes(x = agecorr_wm_residuals, y = agecorr_bpnd_dlpfc)) +
+  geom_point(aes(colour = factor(Patient))) +
+  geom_smooth(method = "lm", se = TRUE, size = 0.5, aes(group = Patient, color = factor(Patient))) +
+  scale_color_manual(name="", 
+                     labels = c("Healthy control", 
+                                "Patient"),
+                     values = c("0"="blue", 
+                                "1"="red")) +
+  theme(legend.position="None") +
+  labs(x = "Working memory", y = "DLPFC")
+
+#CONFIRMATORY ANALYSIS 4 - SPEED OF PROCESSING AND D2R IN DLPFC
+conf_plot9 <- ggplot(d2_cognition, aes(x = agecorr_sop_residuals, y = agecorr_bpnd_dlpfc)) +
+  geom_point(aes(colour = factor(Patient))) +
+  geom_smooth(method = "lm", se = TRUE, size = 0.5, aes(group = Patient, color = factor(Patient))) +
+  scale_color_manual(name="", 
+                     labels = c("Healthy control", 
+                                "Patient"),
+                     values = c("0"="blue", 
+                                "1"="red")) +
+  theme(legend.position="None") +
+  labs(x = "Speed of processing", y = "DLPFC")
+
+plot_cube2 <- plot_grid(conf_plot6, conf_plot7, conf_plot8, conf_plot9, labels = c('1', '2', '3', '4'))
+
+#Adding patient/healthy control legend by extracting the legend from first plot
+legend <- get_legend(
+  conf_plot5 + 
+    guides(color = guide_legend(nrow = 1, label = TRUE)) +
+    theme(legend.position = "bottom"))
+
+#Adding a title
+title <- ggdraw() +
+  draw_label(
+    "Confirmatory analyses of D2-R levels and cognition",
+    fontface = 'bold',
+    x = 0,
+    hjust = 0
+  ) +
+  theme(
+    # add margin on the left of the drawing canvas,
+    # so title is aligned with left edge of first plot
+    plot.margin = margin(0, 0, 0, 7)
+  )
+
+#Put title, legend and plot together and plot
+plot_grid(
+  title, plot_cube2, legend,
+  ncol = 1,
+  # rel_heights values control vertical title margins
+  rel_heights = c(0.1, 1, 0.1)
+)
+
+
+
+```
+
+###  Checking model assumptions, with interaction effect.
+1) Verbal learning in the DLPFC
+2) Verbal learning in the hippocampus
+3) Working memory in the DLPFC
+4) Speed of proccessing in the DLPFC
+
+```{r}
+
+#Verbal learning DLPFC
+plot_vl_dlpfc2_c <- plot(model_vl_dlpfc2_c$fitted.values, model_vl_dlpfc2_c$residuals)
+par(mfrow = c(2,2))
+plot(model_vl_dlpfc2_c)
+
+#Verbal learning hippocampus
+plot_vl_hip2_c <- plot(model_vl_hip2_c$fitted.values, model_vl_hip2_c$residuals)
+par(mfrow = c(2,2))
+plot(model_vl_hip2_c)
+
+#Working memory DLPFC
+plot_wm_dlpfc2_c <- plot(model_wm_dlpfc2_c$fitted.values, model_wm_dlpfc2_c$residuals)
+par(mfrow = c(2,2))
+plot(model_wm_dlpfc2_c)
+
+#Speed of processing DLPFC
+plot_sop_dlpfc2_c <- plot(model_sop_dlpfc2_c$fitted.values, model_sop_dlpfc2_c$residuals)
+par(mfrow = c(2,2))
+plot(model_sop_dlpfc2_c)
+
+
+```
+
+
+###  Table of the residuals 
+
+
+```{r}
+#EXPLORATORY ANALYSES
+
+#EV helt onödigt?
+
+#Make data.frame to look at the min, max, range, mean and sd of residuals
+min <- c(min(model_verblearn$residuals), min(model_wm$residuals), min(model_sop$residuals), min(model_vis_learn$residuals), min(model_cpt$residuals), min(model_neuro_cog$residuals), min(model_wcst$residuals))
+
+max <- c(max(model_verblearn$residuals), max(model_wm$residuals), max(model_sop$residuals), max(model_vis_learn$residuals), max(model_cpt$residuals), max(model_neuro_cog$residuals), max(model_wcst$residuals))
+
+mean <- c(mean(model_verblearn$residuals), mean(model_wm$residuals), mean(model_sop$residuals), mean(model_vis_learn$residuals), mean(model_cpt$residuals), mean(model_neuro_cog$residuals), mean(model_wcst$residuals))
+
+sd <- c(sd(model_verblearn$residuals), sd(model_wm$residuals), sd(model_sop$residuals), sd(model_vis_learn$residuals), sd(model_cpt$residuals), sd(model_neuro_cog$residuals), sd(model_wcst$residuals))
+
+min <- round(min, digits = 3)
+max <- round(max, digits = 3)
+mean <- round(mean, digits = 3)
+sd <- round(sd, digits = 3)
+
+resid.frame <- data.frame(min, max, mean, sd)
+rownames(resid.frame) <- c("Verbal learning", "Working Memory", "Speed of Processing", "Visual Learning", "Attention", "General Cognitive Ability", "Executive Function")
+
+resid.frame
+
+```
+
+
+## Exploratory analysis part 1 - without interaction effect
+
+
+```{r, echo=FALSE, include=TRUE}
+#EXPLORATORY ANALYSIS 1 - VERBAL LEARNING AND D2R IN THALAMUS
+
+model_verblearn_tha <- lm(formula = THA ~ agecorr_verblearn_residuals + Age + Patient, data = d2_cognition)
+summary(model_verblearn_tha)
+round(confint(model_verblearn_tha), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cognition$THA,d2_cognition$agecorr_verblearn_residuals, d2_cognition[,c("Age","Patient")])
+
+#EXPLORATORY ANALYSIS 2 - VERBAL LEARNING AND D2R IN ACC
+model_verblearn_acc <- lm(formula = ACC ~ agecorr_verblearn_residuals + Age + Patient, data = d2_cognition)
+summary(model_verblearn_acc)
+round(confint(model_verblearn_acc), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cognition$ACC,d2_cognition$agecorr_verblearn_residuals, d2_cognition[,c("Age","Patient")])
+
+#EXPLORATORY ANALYSIS 3 - VERBAL LEARNING AND D2R IN TC
+model_verblearn_tc <- lm(formula = TC ~ agecorr_verblearn_residuals + Age + Patient, data = d2_cognition)
+summary(model_verblearn_tc)
+round(confint(model_verblearn_tc), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cognition$TC,d2_cognition$agecorr_verblearn_residuals, d2_cognition[,c("Age","Patient")])
+
+#EXPLORATORY ANALYSIS 4 - ATTENTION AND D2R IN DLPFC
+model_cpt_dlpfc <- lm(formula = DLPFC ~ agecorr_cpt_residuals + Age + Patient, data = d2_cognition)
+summary(model_cpt_dlpfc)
+round(confint(model_cpt_dlpfc), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cognition$DLPFC,d2_cognition$agecorr_cpt_residuals, d2_cognition[,c("Age","Patient")])
+
+#EXPLORATORY ANALYSIS 5 - ATTENTION AND D2R IN THA
+model_cpt_tha <- lm(formula = THA ~ agecorr_cpt_residuals + Age + Patient, data = d2_cognition)
+summary(model_cpt_tha)
+round(confint(model_cpt_tha), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cognition$THA,d2_cognition$agecorr_cpt_residuals, d2_cognition[,c("Age","Patient")])
+
+#EXPLORATORY ANALYSIS 5 - ATTENTION AND D2R IN ACC
+model_cpt_acc <- lm(formula = ACC ~ agecorr_cpt_residuals + Age + Patient, data = d2_cognition)
+summary(model_cpt_acc)
+round(confint(model_cpt_acc), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cognition$ACC,d2_cognition$agecorr_cpt_residuals, d2_cognition[,c("Age","Patient")])
+
+#EXPLORATORY ANALYSIS 6 - ATTENTION AND D2R IN HIP
+model_cpt_hip <- lm(formula = HIP ~ agecorr_cpt_residuals + Age + Patient, data = d2_cognition)
+summary(model_cpt_hip)
+round(confint(model_cpt_hip), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cognition$HIP,d2_cognition$agecorr_cpt_residuals, d2_cognition[,c("Age","Patient")])
+
+#EXPLORATORY ANALYSIS 7 - ATTENTION AND D2R IN TC
+model_cpt_tc <- lm(formula = TC ~ agecorr_cpt_residuals + Age + Patient, data = d2_cognition)
+summary(model_cpt_tc)
+round(confint(model_cpt_tc), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cognition$TC,d2_cognition$agecorr_cpt_residuals, d2_cognition[,c("Age","Patient")])
+
+#EXPLORATORY ANALYSIS 8 - WORKING MEMORY AND D2R IN THA
+model_wm_tha <- lm(formula = THA ~ agecorr_wm_residuals + Age + Patient, data = d2_cognition)
+summary(model_wm_tha)
+round(confint(model_wm_tha), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cognition$THA,d2_cognition$agecorr_wm_residuals, d2_cognition[,c("Age","Patient")])
+
+#EXPLORATORY ANALYSIS 9 - WORKING MEMORY AND D2R IN ACC
+model_wm_acc <- lm(formula = ACC ~ agecorr_wm_residuals + Age + Patient, data = d2_cognition)
+summary(model_wm_acc)
+round(confint(model_wm_acc), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cognition$ACC,d2_cognition$agecorr_wm_residuals, d2_cognition[,c("Age","Patient")])
+
+#EXPLORATORY ANALYSIS 10 - WORKING MEMORY AND D2R IN HIP
+model_wm_hip <- lm(formula = HIP ~ agecorr_wm_residuals + Age + Patient, data = d2_cognition)
+summary(model_wm_hip)
+round(confint(model_wm_hip), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cognition$HIP,d2_cognition$agecorr_wm_residuals, d2_cognition[,c("Age","Patient")])
+
+#EXPLORATORY ANALYSIS 11 - WORKING MEMORY AND D2R IN TC
+model_wm_tc <- lm(formula = TC ~ agecorr_wm_residuals + Age + Patient, data = d2_cognition)
+summary(model_wm_tc)
+round(confint(model_wm_tc), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cognition$TC,d2_cognition$agecorr_wm_residuals, d2_cognition[,c("Age","Patient")])
+
+#EXPLORATORY ANALYSIS 12 - VISUAL LEARNING AND D2R IN DLPFC
+model_vis_learn_dlpfc <- lm(formula = DLPFC ~ agecorr_vis_learn_residuals + Age + Patient, data = d2_cognition)
+summary(model_vis_learn_dlpfc)
+round(confint(model_vis_learn_dlpfc), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cognition$DLPFC,d2_cognition$agecorr_vis_learn_residuals, d2_cognition[,c("Age","Patient")])
+
+#EXPLORATORY ANALYSIS 13 - VISUAL LEARNING AND D2R IN THA
+model_vis_learn_tha <- lm(formula = THA ~ agecorr_vis_learn_residuals + Age + Patient, data = d2_cognition)
+summary(model_vis_learn_tha)
+round(confint(model_vis_learn_tha), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cognition$THA,d2_cognition$agecorr_vis_learn_residuals, d2_cognition[,c("Age","Patient")])
+
+#EXPLORATORY ANALYSIS 14 - VISUAL LEARNING AND D2R IN ACC
+model_vis_learn_acc <- lm(formula = ACC ~ agecorr_vis_learn_residuals + Age + Patient, data = d2_cognition)
+summary(model_vis_learn_acc)
+round(confint(model_vis_learn_acc), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cognition$ACC,d2_cognition$agecorr_vis_learn_residuals, d2_cognition[,c("Age","Patient")])
+
+#EXPLORATORY ANALYSIS 15 - VISUAL LEARNING AND D2R IN HIP
+model_vis_learn_hip <- lm(formula = HIP ~ agecorr_vis_learn_residuals + Age + Patient, data = d2_cognition)
+summary(model_vis_learn_hip)
+round(confint(model_vis_learn_hip), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cognition$HIP,d2_cognition$agecorr_vis_learn_residuals, d2_cognition[,c("Age","Patient")])
+
+#EXPLORATORY ANALYSIS 16 - VISUAL LEARNING AND D2R IN TC
+model_vis_learn_tc <- lm(formula = TC ~ agecorr_vis_learn_residuals + Age + Patient, data = d2_cognition)
+summary(model_vis_learn_tc)
+round(confint(model_vis_learn_tc), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cognition$TC,d2_cognition$agecorr_vis_learn_residuals, d2_cognition[,c("Age","Patient")])
+
+#EXPLORATORY ANALYSIS 17 - SPEED OF PROCESSING AND D2R IN HIP
+model_sop_hip <- lm(formula = HIP ~ agecorr_sop_residuals + Age + Patient, data = d2_cognition)
+summary(model_sop_hip)
+round(confint(model_sop_hip), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cognition$HIP,d2_cognition$agecorr_sop_residuals, d2_cognition[,c("Age","Patient")])
+
+#EXPLORATORY ANALYSIS 18 - SPEED OF PROCESSING AND D2R IN THA
+model_sop_tha <- lm(formula = THA ~ agecorr_sop_residuals + Age + Patient, data = d2_cognition)
+summary(model_sop_tha)
+round(confint(model_sop_tha), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cognition$THA,d2_cognition$agecorr_sop_residuals, d2_cognition[,c("Age","Patient")])
+
+#EXPLORATORY ANALYSIS 19 - SPEED OF PROCESSING AND D2R IN ACC
+model_sop_acc <- lm(formula = ACC ~ agecorr_sop_residuals + Age + Patient, data = d2_cognition)
+summary(model_sop_acc)
+round(confint(model_sop_acc), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cognition$ACC,d2_cognition$agecorr_sop_residuals, d2_cognition[,c("Age","Patient")])
+
+#EXPLORATORY ANALYSIS 20 - SPEED OF PROCESSING AND D2R IN TC
+model_sop_tc <- lm(formula = TC ~ agecorr_sop_residuals + Age + Patient, data = d2_cognition)
+summary(model_sop_tc)
+round(confint(model_sop_tc), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cognition$TC,d2_cognition$agecorr_sop_residuals, d2_cognition[,c("Age","Patient")])
+
+#EXPLORATORY ANALYSIS 21 - EXECUTIVE FUNCTION AND D2R IN DLPFC
+model_wcst_dlpfc <- lm(formula = DLPFC ~ agecorr_wcst_residuals + AgeYr + Patient, data = d2_wcst)
+summary(model_wcst_dlpfc)
+round(confint(model_wcst_dlpfc), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_wcst$DLPFC,d2_wcst$agecorr_wcst_residuals, d2_wcst[,c("AgeYr","Patient")])
+
+#EXPLORATORY ANALYSIS 22 - EXECUTIVE FUNCTION AND D2R IN HIP
+model_wcst_hip <- lm(formula = HIP ~ agecorr_wcst_residuals + AgeYr + Patient, data = d2_wcst)
+summary(model_wcst_hip)
+round(confint(model_wcst_hip), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_wcst$HIP,d2_wcst$agecorr_wcst_residuals, d2_wcst[,c("AgeYr","Patient")])
+
+#EXPLORATORY ANALYSIS 23 - EXECUTIVE FUNCTION AND D2R IN THA
+model_wcst_tha <- lm(formula = THA ~ agecorr_wcst_residuals + AgeYr + Patient, data = d2_wcst)
+summary(model_wcst_tha)
+round(confint(model_wcst_tha), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_wcst$THA,d2_wcst$agecorr_wcst_residuals, d2_wcst[,c("AgeYr","Patient")])
+
+#EXPLORATORY ANALYSIS 24 - EXECUTIVE FUNCTION AND D2R IN ACC
+model_wcst_acc <- lm(formula = ACC ~ agecorr_wcst_residuals + AgeYr + Patient, data = d2_wcst)
+summary(model_wcst_acc)
+round(confint(model_wcst_acc), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_wcst$ACC,d2_wcst$agecorr_wcst_residuals, d2_wcst[,c("AgeYr","Patient")])
+
+#EXPLORATORY ANALYSIS 25 - EXECUTIVE FUNCTION AND D2R IN TC
+model_wcst_tc <- lm(formula = TC ~ agecorr_wcst_residuals + AgeYr + Patient, data = d2_wcst)
+summary(model_wcst_tc)
+round(confint(model_wcst_tc), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_wcst$TC,d2_wcst$agecorr_wcst_residuals, d2_wcst[,c("AgeYr","Patient")])
+
+#EXPLORATORY ANALYSIS 26 - GENERAL COGNITIVE ABILITY AND D2R IN DLPFC
+model_neuro_cog_dlpfc <- lm(formula = DLPFC ~ agecorr_neuro_cog_residuals + Age + Patient, data = d2_cognition)
+summary(model_neuro_cog_dlpfc)
+round(confint(model_neuro_cog_dlpfc), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cognition$DLPFC,d2_cognition$agecorr_neuro_cog_residuals, d2_cognition[,c("Age","Patient")])
+
+#EXPLORATORY ANALYSIS 27 - GENERAL COGNITIVE ABILITY AND D2R IN HIP
+model_neuro_cog_hip <- lm(formula = HIP ~ agecorr_neuro_cog_residuals + Age + Patient, data = d2_cognition)
+summary(model_neuro_cog_hip)
+round(confint(model_neuro_cog_hip), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cognition$HIP,d2_cognition$agecorr_neuro_cog_residuals, d2_cognition[,c("Age","Patient")])
+
+#EXPLORATORY ANALYSIS 28 - GENERAL COGNITIVE ABILITY AND D2R IN THA
+model_neuro_cog_tha <- lm(formula = THA ~ agecorr_neuro_cog_residuals + Age + Patient, data = d2_cognition)
+summary(model_neuro_cog_tha)
+round(confint(model_neuro_cog_tha), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cognition$THA,d2_cognition$agecorr_neuro_cog_residuals, d2_cognition[,c("Age","Patient")])
+
+#EXPLORATORY ANALYSIS 29 - GENERAL COGNITIVE ABILITY AND D2R IN ACC
+model_neuro_cog_acc <- lm(formula = ACC ~ agecorr_neuro_cog_residuals + Age + Patient, data = d2_cognition)
+summary(model_neuro_cog_acc)
+round(confint(model_neuro_cog_acc), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cognition$ACC,d2_cognition$agecorr_neuro_cog_residuals, d2_cognition[,c("Age","Patient")])
+
+#EXPLORATORY ANALYSIS 30 - GENERAL COGNITIVE ABILITY AND D2R IN TC
+model_neuro_cog_tc <- lm(formula = TC ~ agecorr_neuro_cog_residuals + Age + Patient, data = d2_cognition)
+summary(model_neuro_cog_tc)
+round(confint(model_neuro_cog_tc), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cognition$TC,d2_cognition$agecorr_neuro_cog_residuals, d2_cognition[,c("Age","Patient")])
+
+```
+
+
+##  Graphs of exploratory analyses with low p-values and high partial r-values
+
+
+
+```{r}
+
+#EXPLORATORY ANALYSIS 3 - VERBAL LEARNING AND D2R IN TC
+ggplot(d2_cognition, aes(x = agecorr_verblearn_residuals, y = TC)) +
+geom_point(aes(colour = factor(Patient))) +
+geom_smooth(method = "lm", se = TRUE, size = 0.5, aes(group = Patient, color = factor(Patient))) +
+labs(x = "Verbal learning", y = "D2R BPND Temporal cortex", title = "Association between dopamine D2 receptor density in Temporal cortex and verbal learning")
+
+#EXPLORATORY ANALYSIS 5 - ATTENTION AND D2R IN THA
+ggplot(d2_cognition, aes(x = agecorr_cpt_residuals, y = THA)) +
+geom_point(aes(colour = factor(Patient))) +
+geom_smooth(method = "lm", se = TRUE, size = 0.5, aes(group = Patient, color = factor(Patient))) +
+labs(x = "Attention", y = "D2R BPND Thalamus", title = "Association between dopamine D2 receptor density in Thalamus and attention")
+
+#EXPLORATORY ANALYSIS 5 - ATTENTION AND D2R IN ACC
+ggplot(d2_cognition, aes(x = agecorr_cpt_residuals, y = ACC)) +
+geom_point(aes(colour = factor(Patient))) +
+geom_smooth(method = "lm", se = TRUE, size = 0.5, aes(group = Patient, color = factor(Patient))) +
+labs(x = "Attention", y = "D2R BPND ACC", title = "Association between dopamine D2 receptor density in ACC and attention")
+
+#EXPLORATORY ANALYSIS 6 - ATTENTION AND D2R IN HIP
+ggplot(d2_cognition, aes(x = agecorr_cpt_residuals, y = HIP)) +
+geom_point(aes(colour = factor(Patient))) +
+geom_smooth(method = "lm", se = TRUE, size = 0.5, aes(group = Patient, color = factor(Patient))) +
+labs(x = "Attention", y = "D2R BPND Hippocampus", title = "Association between dopamine D2 receptor density in Hippocampus and attention")
+
+#EXPLORATORY ANALYSIS 7 - ATTENTION AND D2R IN TC
+ggplot(d2_cognition, aes(x = agecorr_cpt_residuals, y = TC)) +
+geom_point(aes(colour = factor(Patient))) +
+geom_smooth(method = "lm", se = TRUE, size = 0.5, aes(group = Patient, color = factor(Patient))) +
+labs(x = "Attention", y = "D2R BPND Temporal cortex", title = "Association between dopamine D2 receptor density in temporal cortex and attention")
+
+
+
+```
+
+
+
+
+```{r, echo=FALSE, include=TRUE}
+#Calculate the regression model with interaction effect 
+
+#EXPLORATORY ANALYSIS 31 - VERBAL LEARNING AND D2R IN THALAMUS - INTERACTION
+model_verblearn_tha2_c <- lm(formula = THA_c ~ agecorr_verblearn_residuals*Patient + Age_c, data = d2_cognition)
+summary(model_verblearn_tha2_c)
+round(confint(model_verblearn_tha2_c), digits = 3)
+#Partial r for patients and HC separately 
+pcor.test(d2_cognition_p$THA,d2_cognition_p$agecorr_verblearn_residuals, d2_cognition_p[,c("Age")])
+pcor.test(d2_cognition_h$THA,d2_cognition_h$agecorr_verblearn_residuals, d2_cognition_h[,c("Age")])
+
+#EXPLORATORY ANALYSIS 32 - VERBAL LEARNING AND D2R IN ACC - INTERACTION
+model_verblearn_acc2_c <- lm(formula = ACC_c ~ agecorr_verblearn_residuals*Patient + Age_c, data = d2_cognition)
+summary(model_verblearn_acc2_c)
+round(confint(model_verblearn_acc2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_cognition_p$ACC,d2_cognition_p$agecorr_verblearn_residuals, d2_cognition_p[,c("Age")])
+pcor.test(d2_cognition_h$ACC,d2_cognition_h$agecorr_verblearn_residuals, d2_cognition_h[,c("Age")])
+
+#EXPLORATORY ANALYSIS 33 - VERBAL LEARNING AND D2R IN TC - INTERACTION
+model_verblearn_tc2_c <- lm(formula = TC_c ~ agecorr_verblearn_residuals*Patient + Age_c, data = d2_cognition)
+summary(model_verblearn_tc2_c)
+round(confint(model_verblearn_tc2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_cognition_p$TC,d2_cognition_p$agecorr_verblearn_residuals, d2_cognition_p[,c("Age")])
+pcor.test(d2_cognition_h$TC,d2_cognition_h$agecorr_verblearn_residuals, d2_cognition_h[,c("Age")])
+
+#CONFIRMATORY ANALYSIS - VERBAL LEARNING AND D2R IN DLPFC/HIPPOCAMPUS
+
+#EXPLORATORY ANALYSIS 34 - ATTENTION AND D2R IN DLPFC - INTERACTION
+#Center attention? 
+model_cpt_dlpfc2_c <- lm(formula = DLPFC_c ~ agecorr_cpt_residuals*Patient + Age_c, data = d2_cognition)
+summary(model_cpt_dlpfc2_c)
+round(confint(model_cpt_dlpfc2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_cognition_p$DLPFC,d2_cognition_p$agecorr_cpt_residuals, d2_cognition_p[,c("Age")])
+pcor.test(d2_cognition_h$DLPFC,d2_cognition_h$agecorr_cpt_residuals, d2_cognition_h[,c("Age")])
+
+#EXPLORATORY ANALYSIS 35 - ATTENTION AND D2R IN THA - INTERACTION
+model_cpt_tha2_c <- lm(formula = THA_c ~ agecorr_cpt_residuals*Patient + Age_c, data = d2_cognition)
+summary(model_cpt_tha2_c)
+round(confint(model_cpt_tha2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_cognition_p$THA,d2_cognition_p$agecorr_cpt_residuals, d2_cognition_p[,c("Age")])
+pcor.test(d2_cognition_h$THA,d2_cognition_h$agecorr_cpt_residuals, d2_cognition_h[,c("Age")])
+
+#EXPLORATORY ANALYSIS 36 - ATTENTION AND D2R IN ACC - INTERACTION
+model_cpt_acc2_c <- lm(formula = ACC_c ~ agecorr_cpt_residuals*Patient + Age_c, data = d2_cognition)
+summary(model_cpt_acc2_c)
+round(confint(model_cpt_acc2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_cognition_p$ACC,d2_cognition_p$agecorr_cpt_residuals, d2_cognition_p[,c("Age")])
+pcor.test(d2_cognition_h$ACC,d2_cognition_h$agecorr_cpt_residuals, d2_cognition_h[,c("Age")])
+
+#EXPLORATORY ANALYSIS 37 - ATTENTION AND D2R IN HIP - INTERACTION
+model_cpt_hip2_c <- lm(formula = HIP_c ~ agecorr_cpt_residuals*Patient + Age_c, data = d2_cognition)
+summary(model_cpt_hip2_c)
+round(confint(model_cpt_hip2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_cognition_p$HIP,d2_cognition_p$agecorr_cpt_residuals, d2_cognition_p[,c("Age")])
+pcor.test(d2_cognition_h$HIP,d2_cognition_h$agecorr_cpt_residuals, d2_cognition_h[,c("Age")])
+
+#EXPLORATORY ANALYSIS 38 - ATTENTION AND D2R IN TC - INTERACTION
+model_cpt_tc2_c <- lm(formula = TC_c ~ agecorr_cpt_residuals*Patient + Age_c, data = d2_cognition)
+summary(model_cpt_tc2_c)
+round(confint(model_cpt_tc2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_cognition_p$TC,d2_cognition_p$agecorr_cpt_residuals, d2_cognition_p[,c("Age")])
+pcor.test(d2_cognition_h$TC,d2_cognition_h$agecorr_cpt_residuals, d2_cognition_h[,c("Age")])
+
+#CONFIRMATORY ANALYSIS - WORKING MEMORY AND D2R IN DLPFC
+
+#EXPLORATORY ANALYSIS 39 - WORKING MEMORY AND D2R IN THA - INTERACTION
+#Center working memory?
+model_wm_tha2_c <- lm(formula = THA_c ~ agecorr_wm_residuals*Patient + Age_c, data = d2_cognition)
+summary(model_wm_tha2_c)
+round(confint(model_wm_tha2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_cognition_p$THA,d2_cognition_p$agecorr_wm_residuals, d2_cognition_p[,c("Age")])
+pcor.test(d2_cognition_h$THA,d2_cognition_h$agecorr_wm_residuals, d2_cognition_h[,c("Age")])
+
+#EXPLORATORY ANALYSIS 40 - WORKING MEMORY AND D2R IN ACC - INTERACTION
+model_wm_acc2_c <- lm(formula = ACC_c ~ agecorr_wm_residuals*Patient + Age_c, data = d2_cognition)
+summary(model_wm_acc2_c)
+round(confint(model_wm_acc2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_cognition_p$ACC,d2_cognition_p$agecorr_wm_residuals, d2_cognition_p[,c("Age")])
+pcor.test(d2_cognition_h$ACC,d2_cognition_h$agecorr_wm_residuals, d2_cognition_h[,c("Age")])
+
+#EXPLORATORY ANALYSIS 41 - WORKING MEMORY AND D2R IN HIP - INTERACTION
+model_wm_hip2_c <- lm(formula = HIP_c ~ agecorr_wm_residuals*Patient + Age_c, data = d2_cognition)
+summary(model_wm_hip2_c)
+round(confint(model_wm_hip2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_cognition_p$HIP,d2_cognition_p$agecorr_wm_residuals, d2_cognition_p[,c("Age")])
+pcor.test(d2_cognition_h$HIP,d2_cognition_h$agecorr_wm_residuals, d2_cognition_h[,c("Age")])
+
+#EXPLORATORY ANALYSIS 42 - WORKING MEMORY AND D2R IN TC - INTERACTION
+model_wm_tc2_c <- lm(formula = TC_c ~ agecorr_wm_residuals*Patient + Age_c, data = d2_cognition)
+summary(model_wm_tc2_c)
+round(confint(model_wm_tc2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_cognition_p$TC,d2_cognition_p$agecorr_wm_residuals, d2_cognition_p[,c("Age")])
+pcor.test(d2_cognition_h$TC,d2_cognition_h$agecorr_wm_residuals, d2_cognition_h[,c("Age")])
+
+#EXPLORATORY ANALYSIS 43 - VISUAL LEARNING AND D2R IN DLPFC - INTERACTION
+#Center visual learning?
+model_vis_learn_dlpfc2_c <- lm(formula = DLPFC_c ~ agecorr_vis_learn_residuals*Patient + Age_c, data = d2_cognition)
+summary(model_vis_learn_dlpfc2_c)
+round(confint(model_vis_learn_dlpfc2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_cognition_p$DLPFC,d2_cognition_p$agecorr_vis_learn_residuals, d2_cognition_p[,c("Age")])
+pcor.test(d2_cognition_h$DLPFC,d2_cognition_h$agecorr_vis_learn_residuals, d2_cognition_h[,c("Age")])
+
+#EXPLORATORY ANALYSIS 44 - VISUAL LEARNING AND D2R IN THA - INTERACTION
+model_vis_learn_tha2_c <- lm(formula = THA_c ~ agecorr_vis_learn_residuals*Patient + Age_c, data = d2_cognition)
+summary(model_vis_learn_tha2_c)
+round(confint(model_vis_learn_tha2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_cognition_p$THA,d2_cognition_p$agecorr_vis_learn_residuals, d2_cognition_p[,c("Age")])
+pcor.test(d2_cognition_h$THA,d2_cognition_h$agecorr_vis_learn_residuals, d2_cognition_h[,c("Age")])
+
+#EXPLORATORY ANALYSIS 45 - VISUAL LEARNING AND D2R IN ACC - INTERACTION
+model_vis_learn_acc2_c <- lm(formula = ACC_c ~ agecorr_vis_learn_residuals*Patient + Age_c, data = d2_cognition)
+summary(model_vis_learn_acc2_c)
+round(confint(model_vis_learn_acc2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_cognition_p$ACC,d2_cognition_p$agecorr_vis_learn_residuals, d2_cognition_p[,c("Age")])
+pcor.test(d2_cognition_h$ACC,d2_cognition_h$agecorr_vis_learn_residuals, d2_cognition_h[,c("Age")])
+
+#EXPLORATORY ANALYSIS 46 - VISUAL LEARNING AND D2R IN HIP - INTERACTION
+model_vis_learn_hip2_c <- lm(formula = HIP_c ~ agecorr_vis_learn_residuals*Patient + Age_c, data = d2_cognition)
+summary(model_vis_learn_hip2_c)
+round(confint(model_vis_learn_hip2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_cognition_p$HIP,d2_cognition_p$agecorr_vis_learn_residuals, d2_cognition_p[,c("Age")])
+pcor.test(d2_cognition_h$HIP,d2_cognition_h$agecorr_vis_learn_residuals, d2_cognition_h[,c("Age")])
+
+#EXPLORATORY ANALYSIS 47 - VISUAL LEARNING AND D2R IN TC - INTERACTION
+model_vis_learn_tc2_c <- lm(formula = TC_c ~ agecorr_vis_learn_residuals*Patient + Age_c, data = d2_cognition)
+summary(model_vis_learn_tc2_c)
+round(confint(model_vis_learn_tc2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_cognition_p$TC,d2_cognition_p$agecorr_vis_learn_residuals, d2_cognition_p[,c("Age")])
+pcor.test(d2_cognition_h$TC,d2_cognition_h$agecorr_vis_learn_residuals, d2_cognition_h[,c("Age")])
+
+#EXPLORATORY ANALYSIS 48 - SPEED OF PROCESSING AND D2R IN HIP - INTERACTION
+#Center speed of processing?
+model_sop_hip2_c <- lm(formula = HIP_c ~ agecorr_sop_residuals*Patient + Age_c, data = d2_cognition)
+summary(model_sop_hip2_c)
+round(confint(model_sop_hip2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_cognition_p$HIP,d2_cognition_p$agecorr_sop_residuals, d2_cognition_p[,c("Age")])
+pcor.test(d2_cognition_h$HIP,d2_cognition_h$agecorr_sop_residuals, d2_cognition_h[,c("Age")])
+
+#EXPLORATORY ANALYSIS 49 - SPEED OF PROCESSING AND D2R IN THA - INTERACTION
+model_sop_tha2_c <- lm(formula = THA_c ~ agecorr_sop_residuals*Patient + Age_c, data = d2_cognition)
+summary(model_sop_tha2_c)
+round(confint(model_sop_tha2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_cognition_p$THA,d2_cognition_p$agecorr_sop_residuals, d2_cognition_p[,c("Age")])
+pcor.test(d2_cognition_h$THA,d2_cognition_h$agecorr_sop_residuals, d2_cognition_h[,c("Age")])
+
+#EXPLORATORY ANALYSIS 50 - SPEED OF PROCESSING AND D2R IN ACC - INTERACTION
+model_sop_acc2_c <- lm(formula = ACC_c ~ agecorr_sop_residuals*Patient + Age_c, data = d2_cognition)
+summary(model_sop_acc2_c)
+round(confint(model_sop_acc2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_cognition_p$ACC,d2_cognition_p$agecorr_sop_residuals, d2_cognition_p[,c("Age")])
+pcor.test(d2_cognition_h$ACC,d2_cognition_h$agecorr_sop_residuals, d2_cognition_h[,c("Age")])
+
+#EXPLORATORY ANALYSIS 51 - SPEED OF PROCESSING AND D2R IN TC - INTERACTION
+model_sop_tc2_c <- lm(formula = TC_c ~ agecorr_sop_residuals*Patient + Age_c, data = d2_cognition)
+summary(model_sop_tc2_c)
+round(confint(model_sop_tc2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_cognition_p$TC,d2_cognition_p$agecorr_sop_residuals, d2_cognition_p[,c("Age")])
+pcor.test(d2_cognition_h$TC,d2_cognition_h$agecorr_sop_residuals, d2_cognition_h[,c("Age")])
+
+#EXPLORATORY ANALYSIS 52 - EXECUTIVE FUNCTION AND D2R IN DLPFC - INTERACTION
+#Center executive function? 
+
+model_wcst_dlpfc2_c <- lm(formula = DLPFC_c ~ agecorr_wcst_residuals*Patient + AgeYr_c, data = d2_wcst) 
+summary(model_wcst_dlpfc2_c)
+round(confint(model_wcst_dlpfc2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+d2_wcst_p <- dplyr::filter(d2_wcst, Patient == 1)
+d2_wcst_h <- dplyr::filter(d2_wcst, Patient == 0)
+pcor.test(d2_wcst_p$DLPFC,d2_wcst_p$agecorr_wcst_residuals, d2_wcst_p[,c("AgeYr")])
+pcor.test(d2_wcst_h$DLPFC,d2_wcst_h$agecorr_wcst_residuals, d2_wcst_h[,c("AgeYr")])
+
+#EXPLORATORY ANALYSIS 53 - EXECUTIVE FUNCTION AND D2R IN HIP - INTERACTION
+model_wcst_hip2_c <- lm(formula = HIP_c ~ agecorr_wcst_residuals*Patient + AgeYr_c, data = d2_wcst)
+summary(model_wcst_hip2_c)
+round(confint(model_wcst_hip2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_wcst_p$HIP,d2_wcst_p$agecorr_wcst_residuals, d2_wcst_p[,c("AgeYr")])
+pcor.test(d2_wcst_h$HIP,d2_wcst_h$agecorr_wcst_residuals, d2_wcst_h[,c("AgeYr")])
+
+#EXPLORATORY ANALYSIS 54 - EXECUTIVE FUNCTION AND D2R IN THA - INTERACTION
+model_wcst_tha2_c <- lm(formula = THA_c ~ agecorr_wcst_residuals*Patient + AgeYr_c, data = d2_wcst)
+summary(model_wcst_tha2_c)
+round(confint(model_wcst_tha2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_wcst_p$THA,d2_wcst_p$agecorr_wcst_residuals, d2_wcst_p[,c("AgeYr")])
+pcor.test(d2_wcst_h$THA,d2_wcst_h$agecorr_wcst_residuals, d2_wcst_h[,c("AgeYr")])
+
+#EXPLORATORY ANALYSIS 55 - EXECUTIVE FUNCTION AND D2R IN ACC - INTERACTION
+model_wcst_acc2_c <- lm(formula = ACC_c ~ agecorr_wcst_residuals*Patient + AgeYr_c, data = d2_wcst)
+summary(model_wcst_acc2_c)
+round(confint(model_wcst_acc2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_wcst_p$ACC,d2_wcst_p$agecorr_wcst_residuals, d2_wcst_p[,c("AgeYr")])
+pcor.test(d2_wcst_h$ACC,d2_wcst_h$agecorr_wcst_residuals, d2_wcst_h[,c("AgeYr")])
+
+#EXPLORATORY ANALYSIS 56 - EXECUTIVE FUNCTION AND D2R IN TC - INTERACTION
+model_wcst_tc2_c <- lm(formula = TC_c ~ agecorr_wcst_residuals*Patient + AgeYr_c, data = d2_wcst)
+summary(model_wcst_tc2_c)
+round(confint(model_wcst_tc2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_wcst_p$TC,d2_wcst_p$agecorr_wcst_residuals, d2_wcst_p[,c("AgeYr")])
+pcor.test(d2_wcst_h$TC,d2_wcst_h$agecorr_wcst_residuals, d2_wcst_h[,c("AgeYr")])
+
+#EXPLORATORY ANALYSIS 57 - GENERAL COGNITIVE ABILITY AND D2R IN DLPFC - INTERACTION
+#Center general cognitive ability? 
+model_neuro_cog_dlpfc2_c <- lm(formula = DLPFC_c ~ agecorr_neuro_cog_residuals*Patient + Age_c, data = d2_cognition)
+summary(model_neuro_cog_dlpfc2_c)
+round(confint(model_neuro_cog_dlpfc2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_cognition_p$DLPFC,d2_cognition_p$agecorr_neuro_cog_residuals, d2_cognition_p[,c("Age")])
+pcor.test(d2_cognition_h$DLPFC,d2_cognition_h$agecorr_neuro_cog_residuals, d2_cognition_h[,c("Age")])
+
+#EXPLORATORY ANALYSIS 58 - GENERAL COGNITIVE ABILITY AND D2R IN HIP - INTERACTION
+model_neuro_cog_hip2_c <- lm(formula = HIP_c ~ agecorr_neuro_cog_residuals*Patient + Age_c, data = d2_cognition)
+summary(model_neuro_cog_hip2_c)
+round(confint(model_neuro_cog_hip2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_cognition_p$HIP,d2_cognition_p$agecorr_neuro_cog_residuals, d2_cognition_p[,c("Age")])
+pcor.test(d2_cognition_h$HIP,d2_cognition_h$agecorr_neuro_cog_residuals, d2_cognition_h[,c("Age")])
+
+#EXPLORATORY ANALYSIS 59 - GENERAL COGNITIVE ABILITY AND D2R IN THA - INTERACTION
+model_neuro_cog_tha2_c <- lm(formula = THA_c ~ agecorr_neuro_cog_residuals*Patient + Age_c, data = d2_cognition)
+summary(model_neuro_cog_tha2_c)
+round(confint(model_neuro_cog_tha2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_cognition_p$THA,d2_cognition_p$agecorr_neuro_cog_residuals, d2_cognition_p[,c("Age")])
+pcor.test(d2_cognition_h$THA,d2_cognition_h$agecorr_neuro_cog_residuals, d2_cognition_h[,c("Age")])
+
+#EXPLORATORY ANALYSIS 60 - GENERAL COGNITIVE ABILITY AND D2R IN ACC - INTERACTION
+model_neuro_cog_acc2_c <- lm(formula = ACC_c ~ agecorr_neuro_cog_residuals*Patient + Age_c, data = d2_cognition)
+summary(model_neuro_cog_acc2_c)
+round(confint(model_neuro_cog_acc2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_cognition_p$ACC,d2_cognition_p$agecorr_neuro_cog_residuals, d2_cognition_p[,c("Age")])
+pcor.test(d2_cognition_h$ACC,d2_cognition_h$agecorr_neuro_cog_residuals, d2_cognition_h[,c("Age")])
+
+#EXPLORATORY ANALYSIS 61 - GENERAL COGNITIVE ABILITY AND D2R IN TC - INTERACTION
+model_neuro_cog_tc2_c <- lm(formula = TC_c ~ agecorr_neuro_cog_residuals*Patient + Age_c, data = d2_cognition)
+summary(model_neuro_cog_tc2_c)
+round(confint(model_neuro_cog_tc2_c), digits = 3)
+
+#Partial r for patients and HC separately 
+pcor.test(d2_cognition_p$TC,d2_cognition_p$agecorr_neuro_cog_residuals, d2_cognition_p[,c("Age")])
+pcor.test(d2_cognition_h$TC,d2_cognition_h$agecorr_neuro_cog_residuals, d2_cognition_h[,c("Age")])
+
+```
+
+##  Graphs of exploratory analyses with low interaction effect and low p-values 
+
+
+```{r}
+
+#Plot the regression model and the regression lines for the two groups 
+
+#EXPLORATORY ANALYSIS 35 - ATTENTION AND D2R IN THA - INTERACTION
+ggplot(d2_cognition, aes(x = agecorr_cpt_residuals, y = agecorr_bpnd_tha)) +
+geom_point(aes(colour = factor(Patient))) +
+geom_smooth(method = "lm", se = TRUE, size = 0.5, aes(group = Patient)) +
+labs(x = "Attention", y = "D2R BPND Thalamus", title = "Association between dopamine D2 receptor density in Thalamus and attention")
+
+#EXPLORATORY ANALYSIS 37 - ATTENTION AND D2R IN HIP - INTERACTION
+ggplot(d2_cognition, aes(x = agecorr_cpt_residuals, y = agecorr_bpnd_hip)) +
+geom_point(aes(colour = factor(Patient))) +
+geom_smooth(method = "lm", se = TRUE, size = 0.5, aes(group = Patient)) +
+labs(x = "Attention", y = "D2R BPND Hippocampus", title = "Association between dopamine D2 receptor density in Hippocampus and attention")
+
+#EXPLORATORY ANALYSIS 38 - ATTENTION AND D2R IN TC - INTERACTION
+ggplot(d2_cognition, aes(x = agecorr_cpt_residuals, y = agecorr_bpnd_tc)) +
+geom_point(aes(colour = factor(Patient))) +
+geom_smooth(method = "lm", se = TRUE, size = 0.5, aes(group = Patient)) +
+labs(x = "Attention", y = "D2R BPND Temporal cortex", title = "Association between dopamine D2 receptor density in temporal cortex and attention")
+
+#EXPLORATORY ANALYSIS 46 - VISUAL LEARNING AND D2R IN HIP - INTERACTION
+ggplot(d2_cognition, aes(x = agecorr_vis_learn_residuals, y = agecorr_bpnd_hip)) +
+geom_point(aes(colour = factor(Patient))) +
+geom_smooth(method = "lm", se = TRUE, size = 0.5, aes(group = Patient)) +
+labs(x = "Visual Learning", y = "D2R BPND Hippocampus", title = "Association between dopamine D2 receptor density in Hippocampus and visual learning")
+
+```
+
+##  Bayes Factor   
+
+
+```{r, eval=FALSE, echo=FALSE}
+
+#BAYES FACTOR
+#BAYESIAN ANALYSIS
+library(brms)
+#First, prior for alternative hypothesis 
+prior1 <- prior(normal(0, 0.5), class = "b", coef = "agecorr_verblearn_residuals")
+prior2 <- prior(normal(0, 0.5), class = "b", coef = "agecorr_wm_residuals")
+prior3 <- prior(normal(0, 0.5), class = "b", coef = "agecorr_sop_residuals")
+
+#CONFIRMATORY ANALYSIS 1 - VERBAL LEARNING AND D2R IN DLPFC
+#Bayesian regression models. First, alternative hypothesis containing Cognitive variable
+bayes_vl_dlpfc1 <- brm(formula = DLPFC ~ agecorr_verblearn_residuals + Age + Patient, data = d2_cognition, family = gaussian, prior = prior1, save_all_pars = TRUE, iter = 2000*20) #(iter is high because bridgesampling for Bayes Factor requires it)
+
+#Second, null-hypothesis without Cognitive variable 
+bayes_vl_dlpfc0 <- brm(formula = DLPFC ~ Age + Patient, data = d2_cognition, family = gaussian, save_all_pars = TRUE, iter = 2000*20) #(iter is high because bridgesampling for Bayes Factor requires it)
+
+#Plot diagnostics of sampling
+plot(bayes_vl_dlpfc1)
+plot(bayes_vl_dlpfc0)
+
+#Summarize models
+summary(bayes_vl_dlpfc1)
+summary(bayes_vl_dlpfc0)
+
+#Calculate Bayes Factor
+#Estimated Bayes Factor in favor of bayes_vl_dlpfc1 over bayes_vl_dlpfc0:
+BF10_vl_dlpfc <- bayes_factor(bayes_vl_dlpfc1, bayes_vl_dlpfc0) 
+#To get BF0/1, divide 1 by the above BF
+BF01_vl_dlpfc <- 1/BF10_vl_dlpfc$bf
+
+#CONFIRMATORY ANALYSIS 2 - VERBAL LEARNING AND D2R IN HIPPOCAMPUS
+#Using same prior, as we are using the same cognitive test
+#First, alternative hypothesis containing Cognitive variable
+bayes_vl_hip1 <- brm(formula = HIP ~ agecorr_verblearn_residuals + Age + Patient, data = d2_cognition, family = gaussian, prior = prior1, save_all_pars = TRUE, iter = 2000*20) #(iter is high because bridgesampling for Bayes Factor requires it)
+#Second, null-hypothesis without Cognitive variable
+bayes_vl_hip0 <- brm(formula = HIP ~ Age + Patient, data = d2_cognition, family = gaussian, save_all_pars = TRUE, iter = 2000*20) #(iter is high because bridgesampling for Bayes Factor requires it)
+
+#Plot diagnostics of sampling
+plot(bayes_vl_hip1)
+plot(bayes_vl_hip0)
+
+#Summarize models
+summary(bayes_vl_hip1)
+summary(bayes_vl_hip0)
+
+#Calculate Bayes Factor
+#Estimated Bayes factor in favor of bayes_vl_dlpfc1 over bayes_vl_dlpfc0:
+BF10_vl_hip <- bayes_factor(bayes_vl_hip1, bayes_vl_hip0) 
+#To get BF0/1, divide 1 by the above BF
+BF01_vl_hip <- 1/BF10_vl_hip$bf
+
+#CONFIRMATORY ANALYSIS 3 - WORKING MEMORY AND D2R IN DLPFC
+#Using prior2
+#First, alternative hypothesis containing Cognitive variable
+bayes_wm_dlpfc1 <- brm(formula = DLPFC ~ agecorr_wm_residuals + Age + Patient, data = d2_cognition, family = gaussian, prior = prior2, save_all_pars = TRUE, iter = 2000*20) #(iter is high because bridgesampling for Bayes Factor requires it)
+#Second, null-hypothesis without Cognitive variable
+bayes_wm_dlpfc0 <- brm(formula = DLPFC ~ Age + Patient, data = d2_cognition, family = gaussian, save_all_pars = TRUE, iter = 2000*20) #(iter is high because bridgesampling for Bayes Factor requires it)
+
+#Plot diagnostics of sampling
+plot(bayes_wm_dlpfc1)
+plot(bayes_wm_dlpfc0)
+
+#Summarize models
+summary(bayes_wm_dlpfc1)
+summary(bayes_wm_dlpfc0)
+
+#Calculate Bayes Factor
+#Estimated Bayes factor in favor of bayes_vl_dlpfc1 over bayes_vl_dlpfc0:
+BF10_wm_dlpfc <- bayes_factor(bayes_wm_dlpfc1, bayes_wm_dlpfc0) 
+#To get BF0/1, divide 1 by the above BF
+BF01_wm_dlpfc <- 1/BF10_wm_dlpfc$bf
+
+#Using prior 3
+#CONFIRMATORY ANALYSIS 4 - SPEED OF PROCESSING AND D2R IN DLPFC
+#First, alternative hypothesis containing Cognitive variable
+bayes_sop_dlpfc1 <- brm(formula = DLPFC ~ agecorr_sop_residuals + Age + Patient, data = d2_cognition, family = gaussian, prior = prior3, save_all_pars = TRUE, iter = 2000*20) #(iter is high because bridgesampling for Bayes Factor requires it)
+#Second, null-hypothesis without Cognitive variable
+bayes_sop_dlpfc0 <- brm(formula = DLPFC ~ Age + Patient, data = d2_cognition, family = gaussian, save_all_pars = TRUE, iter = 2000*20) #(iter is high because bridgesampling for Bayes Factor requires it)
+
+#Plot diagnostics of sampling
+plot(bayes_sop_dlpfc1)
+plot(bayes_sop_dlpfc0)
+
+#Summarize models
+summary(bayes_sop_dlpfc1)
+summary(bayes_sop_dlpfc0)
+
+#Calculate Bayes Factor
+#Estimated Bayes factor in favor of bayes_vl_dlpfc1 over bayes_vl_dlpfc0:
+BF10_sop_dlpfc <- bayes_factor(bayes_sop_dlpfc1, bayes_sop_dlpfc0) 
+#To get BF0/1, divide 1 by the above BF
+BF01_sop_dlpfc <- 1/BF10_sop_dlpfc$bf
+
+```
+
+##  Exploratory analyses of D2R levels at baseline and cognitive function at follow-up
+
+
+
+```{r, echo=FALSE}
+
+#EXPLORATORY ANALYSES - D2R AT BASELINE RELATED TO COGNITION AT FOLLOW UP
+#Load cognition file with all patients and controls at follow up
+cognition_fu <- read_excel("/Users/marialee/ownCloud/FLB457_psychosis/DerivedData/Cognition/MCCB_all_191202_FU_raw.xlsx")
+
+#Change "CPT" variable to numeric
+cognition_fu$CPT <- as.numeric(cognition_fu$CPT, na.rm = TRUE)
+
+#Flip TMT test scores so that higher values are better.
+cognition_fu$TMT_f <- ((max(cognition_fu$TMT) - cognition_fu$TMT) + min(cognition_fu$TMT))
+
+#Make domain score Speed of Processing from TMT, BACS and Fluency, using raw scores
+cognition_fu <- cognition_fu %>% mutate(SOP = (TMT_f + BACS + Fluency)/3)
+#Make domain score Working Memory from WMS_III and LNS, using raw scores
+cognition_fu <- cognition_fu %>% mutate(WM = (WMS_III + LNS)/2)
+#Make neurocognitive domain score using SOP, WM, HVLT-R, Mazes, BVMT-R, CPT, using raw scores
+cognition_fu <- cognition_fu %>% mutate(Neurocog = (SOP + WM + HVLT_R + Mazes + BVMT_R + CPT/6))
+
+#Wrangling data to be able to handle NA:s when adding age-corrected residuals; the Vincent approach (row names)
+cognition_fu <- as.data.frame(cognition_fu) #Making it a data.frame because it doesn't work with tibble
+new_name_fu <- cognition_fu$KASP_id
+cognition_fu <- data.frame(cognition_fu, row.names = new_name_fu)
+
+wcst_fu <- as.data.frame(wcst_fu)
+new_name_wcst_fu <- wcst_fu$ClientID
+wcst_fu <- data.frame(wcst_fu, row.names = new_name_wcst_fu)
+
+#Make a regression model and extract the residuals, using the whole client sample for better correction
+#Verbal Learning
+model_verblearnFU <- lm(formula = HVLT_R ~ Age_FU, cognition_fu) #Regression model
+agecorr_verblearn_resid <- model_verblearnFU$residuals #Extracting residuals
+agecorr_verblearn_resid <- data.frame(names(agecorr_verblearn_resid), agecorr_verblearn_resid)
+#Making residuals into data.frame to be able to join together with cognition data.frame in next step
+#Working Memory
+model_wmFU <- lm(formula = WM ~ Age_FU, cognition_fu) 
+agecorr_wm_resid <- model_wmFU$residuals
+agecorr_wm_resid <- data.frame(names(agecorr_wm_resid), agecorr_wm_resid)
+#Speed of Processing
+model_sopFU <- lm(formula = SOP ~ Age_FU, cognition_fu) 
+agecorr_sop_resid <- model_sopFU$residuals
+agecorr_sop_resid <- data.frame(names(agecorr_sop_resid), agecorr_sop_resid)
+#Visual Learning
+model_vis_learnFU <- lm(formula = BVMT_R ~ Age_FU, cognition_fu) 
+agecorr_vis_learn_resid <- model_vis_learnFU$residuals
+agecorr_vis_learn_resid <- data.frame(names(agecorr_vis_learn_resid), agecorr_vis_learn_resid)
+#Attention
+model_cptFU <- lm(formula = CPT ~ Age_FU, cognition_fu) 
+agecorr_cpt_resid <- model_cptFU$residuals
+agecorr_cpt_resid <- data.frame(names(agecorr_cpt_resid), agecorr_cpt_resid)
+#General Cognitive Ability
+model_neuro_cogFU <- lm(formula = Neurocog ~ Age_FU, cognition_fu) 
+agecorr_neuro_cog_resid <- model_neuro_cogFU$residuals
+agecorr_neuro_cog_resid <- data.frame(names(agecorr_neuro_cog_resid), agecorr_neuro_cog_resid)
+#Executive Function
+model_wcstFU <- lm(formula = PctErrors ~ AgeYr, wcst_fu)
+agecorr_wcst_resid <- model_wcstFU$residuals
+agecorr_wcst_resid <- data.frame(names(agecorr_wcst_resid), agecorr_wcst_resid)
+
+#Add residuals to cognition data.frame, using full_join
+cognition_fu <- full_join(cognition_fu, agecorr_verblearn_resid, by = c("KASP_id" = "names.agecorr_verblearn_resid."))
+cognition_fu <- full_join(cognition_fu, agecorr_wm_resid, by = c("KASP_id" = "names.agecorr_wm_resid."))
+cognition_fu <- full_join(cognition_fu, agecorr_sop_resid, by = c("KASP_id" = "names.agecorr_sop_resid."))
+cognition_fu <- full_join(cognition_fu, agecorr_vis_learn_resid, by = c("KASP_id" = "names.agecorr_vis_learn_resid."))
+cognition_fu <- full_join(cognition_fu, agecorr_cpt_resid, by = c("KASP_id" = "names.agecorr_cpt_resid."))
+cognition_fu <- full_join(cognition_fu, agecorr_neuro_cog_resid, by = c("KASP_id" = "names.agecorr_neuro_cog_resid."))
+
+#Executive Function 
+wcst_fu <- full_join(wcst_fu, agecorr_wcst_resid, by = c("ClientID" = "names.agecorr_wcst_resid."))
+
+#Standardizing the age-corrected residuals for more interpretable beta-estimates
+cognition_fu <- cognition_fu %>% 
+                  mutate_at(.vars = vars("agecorr_verblearn_resid", "agecorr_wm_resid", "agecorr_sop_resid", "agecorr_vis_learn_resid", 
+"agecorr_cpt_resid", "agecorr_neuro_cog_resid"),
+                            .funs = list(~scale(.) %>% as.vector))
+wcst_fu <- wcst_fu %>% mutate_at(.vars = vars("agecorr_wcst_resid"),
+                           .funs = list(~scale(.)%>% as.vector))
+
+#Merge PET dataset with Cognition dataset, for the PET subjects only
+d2_cog_fu <- dplyr::inner_join(bpnd, cognition_fu) #Cognition (MCCB) and PET subjects
+d2_wcst_fu <- dplyr::inner_join(bpnd, wcst_fu) #Cognition (WCST) and PET subjects
+
+#Filter out controls
+d2_cog_fu <- dplyr::filter(d2_cog_fu, Patient == 1)
+d2_wcst_fu <- dplyr::filter(d2_wcst_fu, Patient == 1)
+
+#No centering of age variable or bpnd variable was made for these analyses, as they only contain patients, making interaction effect irrelevant  
+
+```
+
+
+###  Regression models of BPND at baseline and cognitive results at follow-up
+
+
+```{r, echo=FALSE}
+
+#Regression models
+#EXPLORATORY ANALYSIS PART 3, BPND AT BASELINE AND COGNITION AT FOLLOW-UP
+#ANALYSIS 1 - VERBAL LEARNING AND D2R IN DLPFC
+model_vl_dlpfcFU <- lm(formula = DLPFC ~ agecorr_verblearn_resid + Age_FU, data = d2_cog_fu)
+summary(model_vl_dlpfcFU)
+round(confint(model_vl_dlpfcFU), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_fu$DLPFC,d2_cog_fu$agecorr_verblearn_resid, d2_cog_fu[,c("Age_FU")])
+
+#ANALYSIS 2 - VERBAL LEARNING AND D2R IN HIPPOCAMPUS
+model_vl_hipFU <- lm(formula = HIP ~ agecorr_verblearn_resid + Age_FU, data = d2_cog_fu)
+summary(model_vl_hipFU)
+round(confint(model_vl_hipFU), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_fu$HIP,d2_cog_fu$agecorr_verblearn_resid, d2_cog_fu[,c("Age_FU")])
+
+#ANALYSIS 3 - VERBAL LEARNING AND D2R IN THALAMUS
+model_vl_thaFU <- lm(formula = THA ~ agecorr_verblearn_resid + Age_FU, data = d2_cog_fu)
+summary(model_vl_thaFU)
+round(confint(model_vl_thaFU), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_fu$THA,d2_cog_fu$agecorr_verblearn_resid, d2_cog_fu[,c("Age_FU")])
+
+#ANALYSIS 4 - VERBAL LEARNING AND D2R IN ACC
+model_vl_accFU <- lm(formula = ACC ~ agecorr_verblearn_resid + Age_FU, data = d2_cog_fu)
+summary(model_vl_accFU)
+round(confint(model_vl_accFU), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_fu$ACC,d2_cog_fu$agecorr_verblearn_resid, d2_cog_fu[,c("Age_FU")])
+
+#ANALYSIS 5 - VERBAL LEARNING AND D2R IN TC
+model_vl_tcFU <- lm(formula = TC ~ agecorr_verblearn_resid + Age_FU, data = d2_cog_fu)
+summary(model_vl_tcFU)
+round(confint(model_vl_tcFU), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_fu$TC,d2_cog_fu$agecorr_verblearn_resid, d2_cog_fu[,c("Age_FU")])
+
+#ANALYSIS 6 - WORKING MEMORY AND D2R IN DLPFC
+model_wm_dlpfcFU <- lm(formula = DLPFC ~ agecorr_wm_resid + Age_FU, data = d2_cog_fu)
+summary(model_wm_dlpfcFU)
+round(confint(model_wm_dlpfcFU), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_fu$DLPFC,d2_cog_fu$agecorr_wm_resid, d2_cog_fu[,c("Age_FU")])
+
+#ANALYSIS 7 - WORKING MEMORY AND D2R IN THA
+model_wm_thaFU <- lm(formula = THA ~ agecorr_wm_resid + Age_FU, data = d2_cog_fu)
+summary(model_wm_thaFU)
+round(confint(model_wm_thaFU), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_fu$THA,d2_cog_fu$agecorr_wm_resid, d2_cog_fu[,c("Age_FU")])
+
+#ANALYSIS 8 - WORKING MEMORY AND D2R IN ACC
+model_wm_accFU <- lm(formula = ACC ~ agecorr_wm_resid + Age_FU, data = d2_cog_fu)
+summary(model_wm_accFU)
+round(confint(model_wm_accFU), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_fu$ACC,d2_cog_fu$agecorr_wm_resid, d2_cog_fu[,c("Age_FU")])
+
+#ANALYSIS 9 - WORKING MEMORY AND D2R IN HIP
+model_wm_hipFU <- lm(formula = HIP ~ agecorr_wm_resid + Age_FU, data = d2_cog_fu)
+summary(model_wm_hipFU)
+round(confint(model_wm_hipFU), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_fu$HIP,d2_cog_fu$agecorr_wm_resid, d2_cog_fu[,c("Age_FU")])
+
+#ANALYSIS 10 - WORKING MEMORY AND D2R IN TC
+model_wm_tcFU <- lm(formula = TC ~ agecorr_wm_resid + Age_FU, data = d2_cog_fu)
+summary(model_wm_tcFU)
+round(confint(model_wm_tcFU), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_fu$TC,d2_cog_fu$agecorr_wm_resid, d2_cog_fu[,c("Age_FU")])
+
+#ANALYSIS 11 - SPEED OF PROCESSING AND D2R IN DLPFC
+model_sop_dlpfcFU <- lm(formula = DLPFC ~ agecorr_sop_resid + Age_FU, data = d2_cog_fu)
+summary(model_sop_dlpfcFU)
+round(confint(model_sop_dlpfcFU), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_fu$DLPFC,d2_cog_fu$agecorr_sop_resid, d2_cog_fu[,c("Age_FU")])
+
+#ANALYSIS 12 - SPEED OF PROCESSING AND D2R IN HIP
+model_sop_hipFU <- lm(formula = HIP ~ agecorr_sop_resid + Age_FU, data = d2_cog_fu)
+summary(model_sop_hipFU)
+round(confint(model_sop_hipFU), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_fu$HIP,d2_cog_fu$agecorr_sop_resid, d2_cog_fu[,c("Age_FU")])
+
+#ANALYSIS 13 - SPEED OF PROCESSING AND D2R IN THA
+model_sop_thaFU <- lm(formula = THA ~ agecorr_sop_resid + Age_FU, data = d2_cog_fu)
+summary(model_sop_thaFU)
+round(confint(model_sop_thaFU), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_fu$THA,d2_cog_fu$agecorr_sop_resid, d2_cog_fu[,c("Age_FU")])
+
+#ANALYSIS 14 - SPEED OF PROCESSING AND D2R IN ACC
+model_sop_accFU <- lm(formula = ACC ~ agecorr_sop_resid + Age_FU, data = d2_cog_fu)
+summary(model_sop_accFU)
+round(confint(model_sop_accFU), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_fu$ACC,d2_cog_fu$agecorr_sop_resid, d2_cog_fu[,c("Age_FU")])
+
+#ANALYSIS 15 - SPEED OF PROCESSING AND D2R IN TC
+model_sop_tcFU <- lm(formula = TC ~ agecorr_sop_resid + Age_FU, data = d2_cog_fu)
+summary(model_sop_tcFU)
+round(confint(model_sop_tcFU), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_fu$TC,d2_cog_fu$agecorr_sop_resid, d2_cog_fu[,c("Age_FU")])
+
+#ANALYSIS 16 - ATTENTION AND D2R IN DLPFC
+model_cpt_dlpfcFU <- lm(formula = DLPFC ~ agecorr_cpt_resid + Age_FU, data = d2_cog_fu)
+summary(model_cpt_dlpfcFU)
+round(confint(model_cpt_dlpfcFU), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_fu$DLPFC,d2_cog_fu$agecorr_cpt_resid, d2_cog_fu[,c("Age_FU")])
+
+#ANALYSIS 17 - ATTENTION AND D2R IN THA
+model_cpt_thaFU <- lm(formula = THA ~ agecorr_cpt_resid + Age_FU, data = d2_cog_fu)
+summary(model_cpt_thaFU)
+round(confint(model_cpt_thaFU), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_fu$THA,d2_cog_fu$agecorr_cpt_resid, d2_cog_fu[,c("Age_FU")])
+
+#ANALYSIS 18 - ATTENTION AND D2R IN ACC
+model_cpt_accFU <- lm(formula = ACC ~ agecorr_cpt_resid + Age_FU, data = d2_cog_fu)
+summary(model_cpt_accFU)
+round(confint(model_cpt_accFU), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_fu$ACC,d2_cog_fu$agecorr_cpt_resid, d2_cog_fu[,c("Age_FU")])
+
+#ANALYSIS 19 - ATTENTION AND D2R IN HIP
+model_cpt_hipFU <- lm(formula = HIP ~ agecorr_cpt_resid + Age_FU, data = d2_cog_fu)
+summary(model_cpt_hipFU)
+round(confint(model_cpt_hipFU), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_fu$HIP,d2_cog_fu$agecorr_cpt_resid, d2_cog_fu[,c("Age_FU")])
+
+#ANALYSIS 20 - ATTENTION AND D2R IN TC
+model_cpt_tcFU <- lm(formula = TC ~ agecorr_cpt_resid + Age_FU, data = d2_cog_fu)
+summary(model_cpt_tcFU)
+round(confint(model_cpt_tcFU), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_fu$TC,d2_cog_fu$agecorr_cpt_resid, d2_cog_fu[,c("Age_FU")])
+
+#ANALYSIS 21 - VISUAL LEARNING AND D2R IN DLPFC
+model_vis_learn_dlpfcFU <- lm(formula = DLPFC ~ agecorr_vis_learn_resid + Age_FU, data = d2_cog_fu)
+summary(model_vis_learn_dlpfcFU)
+round(confint(model_vis_learn_dlpfcFU), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_fu$DLPFC,d2_cog_fu$agecorr_vis_learn_resid, d2_cog_fu[,c("Age_FU")])
+
+#ANALYSIS 22 - VISUAL LEARNING AND D2R IN THA
+model_vis_learn_thaFU <- lm(formula = THA ~ agecorr_vis_learn_resid + Age_FU, data = d2_cog_fu)
+summary(model_vis_learn_thaFU)
+round(confint(model_vis_learn_thaFU), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_fu$THA,d2_cog_fu$agecorr_vis_learn_resid, d2_cog_fu[,c("Age_FU")])
+
+#ANALYSIS 23 - VISUAL LEARNING AND D2R IN ACC
+model_vis_learn_accFU <- lm(formula = ACC ~ agecorr_vis_learn_resid + Age_FU, data = d2_cog_fu)
+summary(model_vis_learn_accFU)
+round(confint(model_vis_learn_accFU), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_fu$ACC,d2_cog_fu$agecorr_vis_learn_resid, d2_cog_fu[,c("Age_FU")])
+
+#ANALYSIS 24 - VISUAL LEARNING AND D2R IN HIP
+model_vis_learn_hipFU <- lm(formula = HIP ~ agecorr_vis_learn_resid + Age_FU, data = d2_cog_fu)
+summary(model_vis_learn_hipFU)
+round(confint(model_vis_learn_hipFU), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_fu$HIP,d2_cog_fu$agecorr_vis_learn_resid, d2_cog_fu[,c("Age_FU")])
+
+#ANALYSIS 25 - VISUAL LEARNING AND D2R IN TC
+model_vis_learn_tcFU <- lm(formula = TC ~ agecorr_vis_learn_resid + Age_FU, data = d2_cog_fu)
+summary(model_vis_learn_tcFU)
+round(confint(model_vis_learn_tcFU), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_fu$TC,d2_cog_fu$agecorr_vis_learn_resid, d2_cog_fu[,c("Age_FU")])
+
+#ANALYSIS 26 - GENERAL COGNITIVE ABILITY AND D2R IN DLPFC
+model_neuro_cog_dlpfcFU <- lm(formula = DLPFC ~ agecorr_neuro_cog_resid + Age_FU, data = d2_cog_fu)
+summary(model_neuro_cog_dlpfcFU)
+round(confint(model_neuro_cog_dlpfcFU), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_fu$DLPFC,d2_cog_fu$agecorr_neuro_cog_resid, d2_cog_fu[,c("Age_FU")])
+
+#ANALYSIS 27 - GENERAL COGNITIVE ABILITY AND D2R IN HIP
+model_neuro_cog_hipFU <- lm(formula = HIP ~ agecorr_neuro_cog_resid + Age_FU, data = d2_cog_fu)
+summary(model_neuro_cog_hipFU)
+round(confint(model_neuro_cog_hipFU), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_fu$HIP,d2_cog_fu$agecorr_neuro_cog_resid, d2_cog_fu[,c("Age_FU")])
+
+#ANALYSIS 28 - GENERAL COGNITIVE ABILITY AND D2R IN THA
+model_neuro_cog_thaFU <- lm(formula = THA ~ agecorr_neuro_cog_resid + Age_FU, data = d2_cog_fu)
+summary(model_neuro_cog_thaFU)
+round(confint(model_neuro_cog_thaFU), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_fu$THA,d2_cog_fu$agecorr_neuro_cog_resid, d2_cog_fu[,c("Age_FU")])
+
+#ANALYSIS 29 - GENERAL COGNITIVE ABILITY AND D2R IN ACC
+model_neuro_cog_accFU <- lm(formula = ACC ~ agecorr_neuro_cog_resid + Age_FU, data = d2_cog_fu)
+summary(model_neuro_cog_accFU)
+round(confint(model_neuro_cog_accFU), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_fu$ACC,d2_cog_fu$agecorr_neuro_cog_resid, d2_cog_fu[,c("Age_FU")])
+
+#ANALYSIS 30 - GENERAL COGNITIVE ABILITY AND D2R IN TC
+model_neuro_cog_tcFU <- lm(formula = TC ~ agecorr_neuro_cog_resid + Age_FU, data = d2_cog_fu)
+summary(model_neuro_cog_tcFU)
+round(confint(model_neuro_cog_tcFU), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_fu$TC,d2_cog_fu$agecorr_neuro_cog_resid, d2_cog_fu[,c("Age_FU")])
+
+#ONLY 8 INDIVIDUALS...
+
+#EXPLORATORY ANALYSIS 21 - EXECUTIVE FUNCTION AND D2R IN DLPFC
+#model_wcst_dlpfc <- lm(formula = DLPFC ~ agecorr_wcst_residuals + AgeYr + Patient, data = d2_wcst)
+#summary(model_wcst_dlpfc)
+#round(confint(model_wcst_dlpfc), digits = 3)
+#Partial correlation for the same relationship
+#pcor.test(d2_wcst$DLPFC,d2_wcst$agecorr_wcst_residuals, d2_wcst[,c("AgeYr","Patient")])
+
+#EXPLORATORY ANALYSIS 22 - EXECUTIVE FUNCTION AND D2R IN HIP
+#model_wcst_hip <- lm(formula = HIP ~ agecorr_wcst_residuals + AgeYr + Patient, data = d2_wcst)
+#summary(model_wcst_hip)
+#round(confint(model_wcst_hip), digits = 3)
+#Partial correlation for the same relationship
+#pcor.test(d2_wcst$HIP,d2_wcst$agecorr_wcst_residuals, d2_wcst[,c("AgeYr","Patient")])
+
+#EXPLORATORY ANALYSIS 23 - EXECUTIVE FUNCTION AND D2R IN THA
+#model_wcst_tha <- lm(formula = THA ~ agecorr_wcst_residuals + AgeYr + Patient, data = d2_wcst)
+#summary(model_wcst_tha)
+#round(confint(model_wcst_tha), digits = 3)
+#Partial correlation for the same relationship
+#pcor.test(d2_wcst$THA,d2_wcst$agecorr_wcst_residuals, d2_wcst[,c("AgeYr","Patient")])
+
+#EXPLORATORY ANALYSIS 24 - EXECUTIVE FUNCTION AND D2R IN ACC
+#model_wcst_acc <- lm(formula = ACC ~ agecorr_wcst_residuals + AgeYr + Patient, data = d2_wcst)
+#summary(model_wcst_acc)
+#round(confint(model_wcst_acc), digits = 3)
+#Partial correlation for the same relationship
+#pcor.test(d2_wcst$ACC,d2_wcst$agecorr_wcst_residuals, d2_wcst[,c("AgeYr","Patient")])
+
+#EXPLORATORY ANALYSIS 25 - EXECUTIVE FUNCTION AND D2R IN TC
+#model_wcst_tc <- lm(formula = TC ~ agecorr_wcst_residuals + AgeYr + Patient, data = d2_wcst)
+#summary(model_wcst_tc)
+#round(confint(model_wcst_tc), digits = 3)
+#Partial correlation for the same relationship
+#pcor.test(d2_wcst$TC,d2_wcst$agecorr_wcst_residuals, d2_wcst[,c("AgeYr","Patient")])
+
+
+```
+
+
+
+###  Regression models of BPND at baseline and change in cognitive results at follow-up
+
+
+
+```{r, echo=FALSE}
+#Constructing the cognitive change variables. 
+d2_cog <- dplyr::select(d2_cognition, subject, Age, agecorr_verblearn_residuals:agecorr_neuro_cog_residuals) #Keep cognitive variables from baseline
+d2_cog_c <- dplyr::inner_join(d2_cog, d2_cog_fu) #Add to new data.frame
+#Make variables for the change in cognitive results from baseline to FU
+d2_cog_c <- d2_cog_c %>% mutate(verb_learn_change = agecorr_verblearn_resid - agecorr_verblearn_residuals, wm_change = agecorr_wm_resid - agecorr_wm_residuals, sop_change = agecorr_sop_resid - agecorr_sop_residuals, cpt_change = agecorr_cpt_resid - agecorr_cpt_residuals, vis_learn_change = agecorr_vis_learn_resid - agecorr_vis_learn_residuals, neuro_cog_change = agecorr_neuro_cog_resid - agecorr_neuro_cog_residuals)
+
+#Regression models
+#EXPLORATORY ANALYSIS PART 4, BPND AT BASELINE AND CHANGE IN COGNITION FROM BASELINE TO FOLLOW-UP
+#ANALYSIS 1 - VERBAL LEARNING AND D2R IN DLPFC
+model_vl_dlpfcC <- lm(formula = DLPFC ~ verb_learn_change + Age, data = d2_cog_c)
+summary(model_vl_dlpfcC)
+round(confint(model_vl_dlpfcC), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_c$DLPFC,d2_cog_c$verb_learn_change, d2_cog_c[,c("Age")])
+
+#ANALYSIS 2 - VERBAL LEARNING AND D2R IN HIPPOCAMPUS
+model_vl_hipC <- lm(formula = HIP ~ verb_learn_change + Age, data = d2_cog_c)
+summary(model_vl_hipC)
+round(confint(model_vl_hipC), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_c$HIP,d2_cog_c$verb_learn_change, d2_cog_c[,c("Age")])
+
+#ANALYSIS 3 - VERBAL LEARNING AND D2R IN THALAMUS
+model_vl_thaC <- lm(formula = THA ~ verb_learn_change + Age, data = d2_cog_c)
+summary(model_vl_thaC)
+round(confint(model_vl_thaC), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_c$THA,d2_cog_c$verb_learn_change, d2_cog_c[,c("Age")])
+
+#ANALYSIS 4 - VERBAL LEARNING AND D2R IN ACC
+model_vl_ACCC <- lm(formula = ACC ~ verb_learn_change + Age, data = d2_cog_c)
+summary(model_vl_ACCC)
+round(confint(model_vl_ACCC), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_c$ACC,d2_cog_c$verb_learn_change, d2_cog_c[,c("Age")])
+
+#ANALYSIS 5 - VERBAL LEARNING AND D2R IN TC
+model_vl_tcC <- lm(formula = TC ~ verb_learn_change + Age, data = d2_cog_c)
+summary(model_vl_tcC)
+round(confint(model_vl_tcC), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_c$TC,d2_cog_c$verb_learn_change, d2_cog_c[,c("Age")])
+
+#ANALYSIS 6 - WORKING MEMORY AND D2R IN DLPFC
+model_wm_dlpfcC <- lm(formula = DLPFC ~ wm_change + Age, data = d2_cog_c)
+summary(model_wm_dlpfcC)
+round(confint(model_wm_dlpfcC), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_c$DLPFC,d2_cog_c$wm_change, d2_cog_c[,c("Age")])
+
+#ANALYSIS 7 - WORKING MEMORY AND D2R IN THA
+model_wm_thaC <- lm(formula = THA ~ wm_change + Age, data = d2_cog_c)
+summary(model_wm_thaC)
+round(confint(model_wm_thaC), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_c$THA,d2_cog_c$wm_change, d2_cog_c[,c("Age")])
+
+#ANALYSIS 8 - WORKING MEMORY AND D2R IN ACC
+model_wm_accC <- lm(formula = ACC ~ wm_change + Age, data = d2_cog_c)
+summary(model_wm_accC)
+round(confint(model_wm_accC), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_c$ACC,d2_cog_c$wm_change, d2_cog_c[,c("Age")])
+
+#ANALYSIS 9 - WORKING MEMORY AND D2R IN HIP
+model_wm_hipC <- lm(formula = HIP ~ wm_change + Age, data = d2_cog_c)
+summary(model_wm_hipC)
+round(confint(model_wm_hipC), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_c$HIP,d2_cog_c$wm_change, d2_cog_c[,c("Age")])
+
+#ANALYSIS 10 - WORKING MEMORY AND D2R IN TC
+model_wm_tcC <- lm(formula = TC ~ wm_change + Age, data = d2_cog_c)
+summary(model_wm_tcC)
+round(confint(model_wm_tcC), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_c$TC,d2_cog_c$wm_change, d2_cog_c[,c("Age")])
+
+#ANALYSIS 11 - SPEED OF PROCESSING AND D2R IN DLPFC
+model_sop_dlpfcC <- lm(formula = DLPFC ~ sop_change + Age, data = d2_cog_c)
+summary(model_sop_dlpfcC)
+round(confint(model_sop_dlpfcC), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_c$DLPFC,d2_cog_c$sop_change, d2_cog_c[,c("Age")])
+
+#ANALYSIS 12 - SPEED OF PROCESSING AND D2R IN HIP
+model_sop_hipC <- lm(formula = HIP ~ sop_change + Age, data = d2_cog_c)
+summary(model_sop_hipC)
+round(confint(model_sop_hipC), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_c$HIP,d2_cog_c$sop_change, d2_cog_c[,c("Age")])
+
+#ANALYSIS 13 - SPEED OF PROCESSING AND D2R IN THA
+model_sop_thaC <- lm(formula = THA ~ sop_change + Age, data = d2_cog_c)
+summary(model_sop_thaC)
+round(confint(model_sop_thaC), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_c$THA,d2_cog_c$sop_change, d2_cog_c[,c("Age")])
+
+#ANALYSIS 14 - SPEED OF PROCESSING AND D2R IN ACC
+model_sop_accC <- lm(formula = ACC ~ sop_change + Age, data = d2_cog_c)
+summary(model_sop_accC)
+round(confint(model_sop_accC), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_c$ACC,d2_cog_c$sop_change, d2_cog_c[,c("Age")])
+
+#ANALYSIS 15 - SPEED OF PROCESSING AND D2R IN TC
+model_sop_tcC <- lm(formula = TC ~ sop_change + Age, data = d2_cog_c)
+summary(model_sop_tcC)
+round(confint(model_sop_tcC), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_c$TC,d2_cog_c$sop_change, d2_cog_c[,c("Age")])
+
+#ANALYSIS 16 - ATTENTION AND D2R IN DLPFC
+model_cpt_dlpfcC <- lm(formula = DLPFC ~ cpt_change + Age, data = d2_cog_c)
+summary(model_cpt_dlpfcC)
+round(confint(model_cpt_dlpfcC), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_c$DLPFC,d2_cog_c$cpt_change, d2_cog_c[,c("Age")])
+
+#ANALYSIS 17 - ATTENTION AND D2R IN THA
+model_cpt_thaC <- lm(formula = THA ~ cpt_change + Age, data = d2_cog_c)
+summary(model_cpt_thaC)
+round(confint(model_cpt_thaC), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_c$THA,d2_cog_c$cpt_change, d2_cog_c[,c("Age")])
+
+#ANALYSIS 18 - ATTENTION AND D2R IN ACC
+model_cpt_accC <- lm(formula = ACC ~ cpt_change + Age, data = d2_cog_c)
+summary(model_cpt_accC)
+round(confint(model_cpt_accC), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_c$ACC,d2_cog_c$cpt_change, d2_cog_c[,c("Age")])
+
+#ANALYSIS 19 - ATTENTION AND D2R IN HIP
+model_cpt_hipC <- lm(formula = HIP ~ cpt_change + Age, data = d2_cog_c)
+summary(model_cpt_hipC)
+round(confint(model_cpt_hipC), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_c$HIP,d2_cog_c$cpt_change, d2_cog_c[,c("Age")])
+
+#ANALYSIS 20 - ATTENTION AND D2R IN TC
+model_cpt_tcC <- lm(formula = TC ~ cpt_change + Age, data = d2_cog_c)
+summary(model_cpt_tcC)
+round(confint(model_cpt_tcC), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_c$TC,d2_cog_c$cpt_change, d2_cog_c[,c("Age")])
+
+#ANALYSIS 21 - VISUAL LEARNING AND D2R IN DLPFC
+model_vis_learn_dlpfcC <- lm(formula = DLPFC ~ vis_learn_change + Age, data = d2_cog_c)
+summary(model_vis_learn_dlpfcC)
+round(confint(model_vis_learn_dlpfcC), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_c$DLPFC,d2_cog_c$vis_learn_change, d2_cog_c[,c("Age")])
+
+#ANALYSIS 22 - VISUAL LEARNING AND D2R IN THA
+model_vis_learn_thaC <- lm(formula = THA ~ vis_learn_change + Age, data = d2_cog_c)
+summary(model_vis_learn_thaC)
+round(confint(model_vis_learn_thaC), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_c$THA,d2_cog_c$vis_learn_change, d2_cog_c[,c("Age")])
+
+#ANALYSIS 23 - VISUAL LEARNING AND D2R IN ACC
+model_vis_learn_accC <- lm(formula = ACC ~ vis_learn_change + Age, data = d2_cog_c)
+summary(model_vis_learn_accC)
+round(confint(model_vis_learn_accC), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_c$ACC,d2_cog_c$vis_learn_change, d2_cog_c[,c("Age")])
+
+#ANALYSIS 24 - VISUAL LEARNING AND D2R IN HIP
+model_vis_learn_hipC <- lm(formula = HIP ~ vis_learn_change + Age, data = d2_cog_c)
+summary(model_vis_learn_hipC)
+round(confint(model_vis_learn_hipC), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_c$HIP,d2_cog_c$vis_learn_change, d2_cog_c[,c("Age")])
+
+#ANALYSIS 25 - VISUAL LEARNING AND D2R IN TC
+model_vis_learn_tcC <- lm(formula = TC ~ vis_learn_change + Age, data = d2_cog_c)
+summary(model_vis_learn_tcC)
+round(confint(model_vis_learn_tcC), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_c$TC,d2_cog_c$vis_learn_change, d2_cog_c[,c("Age")])
+
+#ANALYSIS 26 - GENERAL COGNITIVE ABILITY AND D2R IN DLPFC
+model_neuro_cog_dlpfcC <- lm(formula = DLPFC ~ neuro_cog_change + Age, data = d2_cog_c)
+summary(model_neuro_cog_dlpfcC)
+round(confint(model_neuro_cog_dlpfcC), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_c$DLPFC,d2_cog_c$neuro_cog_change, d2_cog_c[,c("Age")])
+
+#ANALYSIS 27 - GENERAL COGNITIVE ABILITY AND D2R IN HIP
+model_neuro_cog_hipC <- lm(formula = HIP ~ neuro_cog_change + Age, data = d2_cog_c)
+summary(model_neuro_cog_hipC)
+round(confint(model_neuro_cog_hipC), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_c$HIP,d2_cog_c$neuro_cog_change, d2_cog_c[,c("Age")])
+
+#ANALYSIS 28 - GENERAL COGNITIVE ABILITY AND D2R IN THA
+model_neuro_cog_thaC <- lm(formula = THA ~ neuro_cog_change + Age, data = d2_cog_c)
+summary(model_neuro_cog_thaC)
+round(confint(model_neuro_cog_thaC), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_c$THA,d2_cog_c$neuro_cog_change, d2_cog_c[,c("Age")])
+
+#ANALYSIS 29 - GENERAL COGNITIVE ABILITY AND D2R IN ACC
+model_neuro_cog_accC <- lm(formula = ACC ~ neuro_cog_change + Age, data = d2_cog_c)
+summary(model_neuro_cog_accC)
+round(confint(model_neuro_cog_accC), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_c$ACC,d2_cog_c$neuro_cog_change, d2_cog_c[,c("Age")])
+
+#ANALYSIS 30 - GENERAL COGNITIVE ABILITY AND D2R IN TC
+model_neuro_cog_tcC <- lm(formula = TC ~ neuro_cog_change + Age, data = d2_cog_c)
+summary(model_neuro_cog_tcC)
+round(confint(model_neuro_cog_tcC), digits = 3)
+#Partial correlation for the same relationship
+pcor.test(d2_cog_c$TC,d2_cog_c$neuro_cog_change, d2_cog_c[,c("Age")])
+
+```
+
